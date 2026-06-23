@@ -1,0 +1,30 @@
+{
+  "name": "koishi-plugin-emoji-recall",
+  "description": "按轮语义召回:用当前对话向量检索 emojiluna 表情库,每轮只注入最相关的 K 张(token 少且贴合上下文),经 {emojis_smart} 注入 chatluna 预设",
+  "version": "0.1.0",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "emojiluna",
+    "emoji",
+    "embedding",
+    "rag"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.18.0"
+  },
+  "koishi": {
+    "description": {
+      "zh": "按轮语义召回表情包:向量检索当前对话最相关的 K 张,经 {emojis_smart} 注入"
+    },
+    "service": {
+      "required": [
+        "chatluna",
+        "emojiluna"
+      ]
+    }
+  }
+}

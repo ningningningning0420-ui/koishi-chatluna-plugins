@@ -1,0 +1,28 @@
+{
+  "name": "koishi-plugin-emoji-intents",
+  "description": "意图式表情注入:把 emojiluna 的标签/分类词表(而非逐张 URL 清单)注入 chatluna,模型挑意图、服务器随机选图;token 随标签数封顶,不随图片数增长",
+  "version": "0.1.0",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "emojiluna",
+    "emoji"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.18.0"
+  },
+  "koishi": {
+    "description": {
+      "zh": "意图式表情注入:注入标签/分类词表,模型挑意图、服务器随机选图,经 {emoji_intents} 注入"
+    },
+    "service": {
+      "required": [
+        "chatluna",
+        "emojiluna"
+      ]
+    }
+  }
+}

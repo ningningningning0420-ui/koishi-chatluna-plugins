@@ -1,0 +1,31 @@
+{
+  "name": "koishi-plugin-chatluna-scene-rules",
+  "version": "0.5.1",
+  "description": "Living-memory pool alias for ChatLuna: map multiple preset ids (e.g. separate private/group presets) onto one shared memory pool, without patching chatluna-livingmemory",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "chatluna-livingmemory",
+    "livingmemory",
+    "memory",
+    "alias",
+    "chatbot"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.17.0",
+    "koishi-plugin-chatluna": "*"
+  },
+  "koishi": {
+    "description": {
+      "zh": "livingmemory 记忆池别名器：把同一角色的多个预设（如私聊版/群聊版/语音版）的 presetId 映射到同一个共享记忆池 key，让它们共享 livingmemory 记忆。运行时接管服务方法，不改 chatluna-livingmemory 任何文件，停用即还原。"
+    },
+    "service": {
+      "required": [
+        "chatluna_living_memory"
+      ]
+    }
+  }
+}
