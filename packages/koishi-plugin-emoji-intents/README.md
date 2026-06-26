@@ -21,10 +21,11 @@
 
 ## 三步启用
 
-1. 安装(放到 koishi app 的 `external/` 下):
+1. 安装:在 Koishi 控制台的**插件市场**搜 `emoji-intents` 直接安装;或命令行
    ```bash
-   npm i ./external/koishi-plugin-emoji-intents
+   npm i koishi-plugin-emoji-intents
    ```
+   (从源码用:放到 koishi app 的 `external/` 下,再 `npm i ./external/koishi-plugin-emoji-intents`。)
 2. `koishi.yml` 启用(`selfUrl` = 本 bot 端口),并**关掉 emojiluna 的全量注入**避免双注入:
    ```yaml
      emoji-intents:main:

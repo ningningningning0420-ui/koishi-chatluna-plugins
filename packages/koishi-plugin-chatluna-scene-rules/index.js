@@ -32,21 +32,34 @@ exports.apply = (ctx, config) => {
         }
         return mapped ?? id
     }
+    // 接管前先确认方法存在：不同 chatluna-livingmemory 版本若改了方法名/签名，
+    // 这里 warn-and-skip 而不是直接 throw 崩掉插件加载。停用时只还原接管过的方法。
+    const restorers = []
+
     // 总闸：所有记忆 scope（召回/入库/快照/注入）都经 createScope 构造，
     // 在这里对 presetId 套别名。character 路径不走 resolvePresetId，
     // 而是直接拼 `${presetName}（Character）` 后调 createScope。
-    const origScope = svc.createScope.bind(svc)
-    svc.createScope = (conversationId, presetId, userId, channelId, options = {}) => {
-        return origScope(conversationId, mapId(presetId), userId, channelId, options)
+    if (typeof svc.createScope === 'function') {
+        const origScope = svc.createScope.bind(svc)
+        svc.createScope = (conversationId, presetId, userId, channelId, options = {}) => {
+            return origScope(conversationId, mapId(presetId), userId, channelId, options)
+        }
+        restorers.push(() => { svc.createScope = origScope })
+    } else {
+        logger.warn('chatluna_living_memory.createScope 不存在（livingmemory 版本不兼容？），记忆池别名未生效')
     }
+
     // 兜底：部分旧路径仍经 resolvePresetId（其结果随后也会进 createScope；
     // 已映射的值不在别名键里，不会发生二次映射）。
-    const origResolve = svc.resolvePresetId.bind(svc)
-    svc.resolvePresetId = (message, fallbackPresetId) => {
-        return mapId(origResolve(message, fallbackPresetId))
+    if (typeof svc.resolvePresetId === 'function') {
+        const origResolve = svc.resolvePresetId.bind(svc)
+        svc.resolvePresetId = (message, fallbackPresetId) => {
+            return mapId(origResolve(message, fallbackPresetId))
+        }
+        restorers.push(() => { svc.resolvePresetId = origResolve })
     }
+
     ctx.effect(() => () => {
-        svc.createScope = origScope
-        svc.resolvePresetId = origResolve
+        for (const restore of restorers) restore()
     })
 }

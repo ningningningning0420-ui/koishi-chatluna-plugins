@@ -4,6 +4,21 @@
   "version": "0.1.0",
   "main": "index.js",
   "license": "MIT",
+  "author": "妖祀",
+  "homepage": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/tree/main/packages/koishi-plugin-emoji-recall#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ningningningning0420-ui/koishi-chatluna-plugins.git",
+    "directory": "packages/koishi-plugin-emoji-recall"
+  },
+  "bugs": {
+    "url": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/issues"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "koishi",
     "plugin",
@@ -14,11 +29,14 @@
     "rag"
   ],
   "peerDependencies": {
-    "koishi": "^4.18.0"
+    "koishi": "^4.18.0",
+    "koishi-plugin-chatluna": "*",
+    "koishi-plugin-emojiluna": "*"
   },
   "koishi": {
     "description": {
-      "zh": "按轮语义召回表情包:向量检索当前对话最相关的 K 张,经 {emojis_smart} 注入"
+      "zh": "按轮语义召回表情包:向量检索当前对话最相关的 K 张,经 {emojis_smart} 注入",
+      "en": "Per-turn semantic recall of emojiluna stickers: vector-search the K most relevant stickers for the current conversation and inject them into chatluna presets via {emojis_smart}."
     },
     "service": {
       "required": [

@@ -1,9 +1,24 @@
 {
   "name": "koishi-plugin-chatluna-scene-rules",
   "version": "0.5.1",
-  "description": "Living-memory pool alias for ChatLuna: map multiple preset ids (e.g. separate private/group presets) onto one shared memory pool, without patching chatluna-livingmemory",
+  "description": "ChatLuna livingmemory 记忆池别名器:把同一角色多个预设(私聊版/群聊版/语音版)的 presetId 映射到同一个共享记忆池,实现多预设共享 livingmemory 记忆;运行时接管服务方法,不改 chatluna-livingmemory 任何文件",
   "main": "index.js",
   "license": "MIT",
+  "author": "妖祀",
+  "homepage": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/tree/main/packages/koishi-plugin-chatluna-scene-rules#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ningningningning0420-ui/koishi-chatluna-plugins.git",
+    "directory": "packages/koishi-plugin-chatluna-scene-rules"
+  },
+  "bugs": {
+    "url": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/issues"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "koishi",
     "plugin",
@@ -16,11 +31,13 @@
   ],
   "peerDependencies": {
     "koishi": "^4.17.0",
-    "koishi-plugin-chatluna": "*"
+    "koishi-plugin-chatluna": "*",
+    "koishi-plugin-chatluna-livingmemory": "*"
   },
   "koishi": {
     "description": {
-      "zh": "livingmemory 记忆池别名器：把同一角色的多个预设（如私聊版/群聊版/语音版）的 presetId 映射到同一个共享记忆池 key，让它们共享 livingmemory 记忆。运行时接管服务方法，不改 chatluna-livingmemory 任何文件，停用即还原。"
+      "zh": "livingmemory 记忆池别名器：把同一角色的多个预设（如私聊版/群聊版/语音版）的 presetId 映射到同一个共享记忆池 key，让它们共享 livingmemory 记忆。运行时接管服务方法，不改 chatluna-livingmemory 任何文件，停用即还原。",
+      "en": "LivingMemory pool aliaser for ChatLuna: map several presets of one character (e.g. private/group/voice variants) onto a single shared memory-pool key so they share livingmemory. Wraps the service methods at runtime; touches no chatluna-livingmemory file and restores on unload."
     },
     "service": {
       "required": [

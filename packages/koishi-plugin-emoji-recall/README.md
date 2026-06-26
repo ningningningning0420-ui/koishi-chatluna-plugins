@@ -6,8 +6,8 @@
 
 库越大也不会让每轮成本失控,而且 bot 发的图贴合当下话题(在聊猫,就浮现猫的表情)。
 
-完整的安装 / 配置 / 预设接入(含「以髭切为例」的可复制片段)见发布包根目录的
-**《安装与使用指南.md》**。这里只放速查。
+完整的安装 / 配置 / 预设接入(含「以髭切为例」的可复制片段)见仓库的
+[**安装与使用指南**](https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/blob/main/docs/emoji-recall-安装与使用指南.md)。这里只放速查。
 
 ## 它解决什么
 
@@ -27,10 +27,11 @@ emojiluna 原生的 `{emojis}` 会把**全部表情**(每张:名称 + 完整 URL
 
 ## 三步启用
 
-1. 安装(本地目录依赖):把本目录放到你的 koishi app 下的 `external/`,然后
+1. 安装:在 Koishi 控制台的**插件市场**搜 `emoji-recall` 直接安装;或命令行
    ```bash
-   npm i ./external/koishi-plugin-emoji-recall      # 或 yarn add koishi-plugin-emoji-recall@file:./external/koishi-plugin-emoji-recall
+   npm i koishi-plugin-emoji-recall
    ```
+   (从源码用:把本目录放到 koishi app 的 `external/` 下,再 `npm i ./external/koishi-plugin-emoji-recall`。)
 2. `koishi.yml` 启用(`selfUrl` 必须 = 本 bot 自己的端口,与 emojiluna 一致):
    ```yaml
      emoji-recall:main:

@@ -1,0 +1,48 @@
+{
+  "name": "koishi-plugin-chatluna-character-buffer-backup",
+  "version": "0.1.0",
+  "description": "Persist chatluna-character's in-memory message buffer to the database and restore it on restart / config-save, so the bot keeps recent context across reloads.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "妖祀",
+  "homepage": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/tree/main/packages/koishi-plugin-chatluna-character-buffer-backup#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ningningningning0420-ui/koishi-chatluna-plugins.git",
+    "directory": "packages/koishi-plugin-chatluna-character-buffer-backup"
+  },
+  "bugs": {
+    "url": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/issues"
+  },
+  "files": [
+    "index.js",
+    "lib.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "chatluna-character",
+    "chatbot",
+    "memory",
+    "context"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.17.0",
+    "koishi-plugin-chatluna-character": "*"
+  },
+  "koishi": {
+    "description": {
+      "zh": "把 chatluna-character 只存在内存里的近期对话缓冲持久化到数据库，重启 / 保存配置后自动灌回，避免 bot 忘记刚刚聊的上下文。",
+      "en": "Persist chatluna-character's in-memory recent-message buffer to the database and auto-restore it after a restart / config-save, so the bot doesn't forget the conversation it was just having."
+    },
+    "service": {
+      "required": [
+        "database",
+        "chatluna_character"
+      ]
+    }
+  }
+}
