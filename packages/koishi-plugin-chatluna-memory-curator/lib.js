@@ -84,6 +84,17 @@ function mergeProfile(currentContent, patch, template, maxChars) {
   return capText(renderProfile(obj, template), maxChars)
 }
 
+function buildEntityRow(profileRow, factCount, platform) {
+  const obj = parseProfile(profileRow.content)
+  const entity = profileRow.entity || ''
+  const qq = entity.includes(':') ? entity.slice(entity.indexOf(':') + 1) : entity
+  return { entity, qq, aliases: obj['称呼'] || '', favor: obj['好感度'] || '', factCount: factCount || 0 }
+}
+
+function factView(r) {
+  return { id: r.id, content: r.content, importance: r.importance == null ? null : r.importance, status: r.status, lastAccessedAt: r.lastAccessedAt == null ? null : r.lastAccessedAt, updatedAt: r.updatedAt }
+}
+
 function selectPresent(recentSpeakerEntities, profilesByEntity, cap) {
   const out = []
   for (const entity of recentSpeakerEntities) {
@@ -94,4 +105,4 @@ function selectPresent(recentSpeakerEntities, profilesByEntity, cap) {
   return out
 }
 
-module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates, parseProfile, renderProfile, capText, mergeProfile, selectPresent }
+module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates, parseProfile, renderProfile, capText, mergeProfile, selectPresent, buildEntityRow, factView }

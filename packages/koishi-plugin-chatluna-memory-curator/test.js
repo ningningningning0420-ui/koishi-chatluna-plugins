@@ -82,3 +82,19 @@ test('selectPresent: 保留 recency 顺序, 仅有档案者, 截 cap', () => {
   assert.deepEqual(out, [{ entity: 'onebot:1', content: 'A' }, { entity: 'onebot:3', content: 'C' }])
   assert.equal(lib.selectPresent(['onebot:1', 'onebot:3'], profiles, 1).length, 1)
 })
+
+test('buildEntityRow: 从 profile 行 + 事实数 拼出列表行(含 QQ号、别名、好感度)', () => {
+  const row = { entity: 'onebot:692533428', content: '称呼: 芙蕾、相川\n好感度: 高\n称呼习惯: 管朋友叫老公' }
+  const out = lib.buildEntityRow(row, 5, 'onebot')
+  assert.equal(out.entity, 'onebot:692533428')
+  assert.equal(out.qq, '692533428')
+  assert.equal(out.aliases, '芙蕾、相川')
+  assert.equal(out.favor, '高')
+  assert.equal(out.factCount, 5)
+})
+test('factView: 只留前端要的字段, 不含 embedding', () => {
+  const r = { id: 'x', content: 'hi', importance: 0.5, status: 'active', lastAccessedAt: 123, updatedAt: 456, embedding: [1, 2], sourceMessages: 'big' }
+  const v = lib.factView(r)
+  assert.deepEqual(Object.keys(v).sort(), ['content', 'id', 'importance', 'lastAccessedAt', 'status', 'updatedAt'])
+  assert.equal(v.embedding, undefined)
+})

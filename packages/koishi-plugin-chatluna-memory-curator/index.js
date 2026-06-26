@@ -283,7 +283,31 @@ exports.apply = (ctx, config) => {
   }
   ctx.inject(['console'], (ctx2) => {
     ctx2.console.addEntry(consoleEntryPaths())
-    ctx2.logger('chatluna-memory-curator').info('console panel entry registered')
+    const PID = () => config.sharedPresetId
+    ctx2.console.addListener('memory-curator/listEntities', async ({ search } = {}) => {
+      const pid = PID(); if (!pid) return []
+      const profiles = await ctx.database.get(TABLE, { presetId: pid, memKind: 'profile' })
+      const facts = await ctx.database.get(TABLE, { presetId: pid, memKind: 'fact', status: { $ne: 'superseded' } }, ['entity'])
+      const counts = {}
+      for (const f of facts) if (f.entity) counts[f.entity] = (counts[f.entity] || 0) + 1
+      let rows = profiles.map((p) => lib.buildEntityRow(p, counts[p.entity] || 0, config.platform))
+      if (search) { const s = String(search).toLowerCase(); rows = rows.filter((r) => r.aliases.toLowerCase().includes(s) || r.qq.includes(s)) }
+      return rows.sort((a, b) => b.factCount - a.factCount)
+    })
+    ctx2.console.addListener('memory-curator/getPerson', async ({ entity }) => {
+      const pid = PID(); if (!pid) return { entity, qq: '', profile: {}, facts: [] }
+      const prof = (await ctx.database.get(TABLE, { presetId: pid, entity, memKind: 'profile' }))[0]
+      const facts = await ctx.database.get(TABLE, { presetId: pid, entity, memKind: 'fact' }, ['id', 'content', 'importance', 'status', 'lastAccessedAt', 'updatedAt'])
+      const qq = entity.includes(':') ? entity.slice(entity.indexOf(':') + 1) : entity
+      return { entity, qq, profile: prof ? lib.parseProfile(prof.content) : {}, facts: facts.map(lib.factView).sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt)) }
+    })
+    ctx2.console.addListener('memory-curator/stats', async () => {
+      const pid = PID(); if (!pid) return { people: 0, profiles: 0, facts: 0 }
+      const profiles = await ctx.database.get(TABLE, { presetId: pid, memKind: 'profile' }, ['entity'])
+      const facts = await ctx.database.get(TABLE, { presetId: pid, memKind: 'fact', status: { $ne: 'superseded' } }, ['id'])
+      return { people: new Set(profiles.map((p) => p.entity)).size, profiles: profiles.length, facts: facts.length }
+    })
+    ctx2.logger('chatluna-memory-curator').info('console panel entry + read listeners registered')
   })
 
   ctx.effect(() => () => {
