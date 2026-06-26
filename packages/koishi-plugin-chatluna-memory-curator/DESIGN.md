@@ -144,8 +144,9 @@ recency = exp(-Δhours / τ)        // τ 默认 72h,可配
 ## 12. 停用零影响
 
 - 叠加列:停用后列仍在,但 vanilla livingmemory 不读,无害。
-- 运行时接管:`ctx.effect`/dispose 时还原 `retrieve` 与 `repository.createMemory`(scene-rules 已验证此模式)。
-- 工具:dispose 时注销。
+- provider/缓存:在场者 provider 用 `ctx.effect(() => registerFunctionProvider(...))` 注册,koishi 自动析构(emoji-recall 同款);`groupInfoCache` dispose 时清。
+- 工具:随 `ChatLunaPlugin` 生命周期注销。
+- **首版不接管 livingmemory 任何方法**,故无需还原任何包裹。
 - 结果:停用 → livingmemory 回到原样。
 
 ## 13. 配置项清单(Schema 草案)
