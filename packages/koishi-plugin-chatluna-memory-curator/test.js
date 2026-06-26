@@ -54,3 +54,17 @@ test('rankCandidates: queryVec=null 时退化为 imp+rec', () => {
   const out = lib.rankCandidates(cands, null, now, { weights: { rel: 1, imp: 1, rec: 1 }, tau: 72, topK: 5 })
   assert.equal(out[0].id, 'a')
 })
+
+test('parseProfile/renderProfile 往返', () => {
+  const obj = lib.parseProfile('称呼: 阿江\n好感度: 70')
+  assert.deepEqual(obj, { 称呼: '阿江', 好感度: '70' })
+  assert.equal(lib.renderProfile({ 称呼: '阿江', 好感度: '70' }, ['称呼', '好感度', '印象']), '称呼: 阿江\n好感度: 70')
+})
+
+test('mergeProfile: 合并新字段, null 删字段, 封顶', () => {
+  const merged = lib.mergeProfile('称呼: 阿江\n好感度: 70', { 好感度: '85', 印象: '爱开玩笑' }, ['称呼', '好感度', '印象'], 1000)
+  assert.equal(merged, '称呼: 阿江\n好感度: 85\n印象: 爱开玩笑')
+  const removed = lib.mergeProfile('称呼: 阿江\n印象: x', { 印象: '' }, ['称呼', '好感度', '印象'], 1000)
+  assert.equal(removed, '称呼: 阿江')
+  assert.equal(lib.capText('abcdef', 3), 'abc')
+})

@@ -49,4 +49,38 @@ function rankCandidates(candidates, queryVec, nowMs, opts) {
   return scored.slice(0, topK)
 }
 
-module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates }
+function parseProfile(content) {
+  const obj = {}
+  for (const line of String(content || '').split('\n')) {
+    const idx = line.indexOf(':')
+    if (idx < 0) continue
+    const key = line.slice(0, idx).trim()
+    const val = line.slice(idx + 1).trim()
+    if (key) obj[key] = val
+  }
+  return obj
+}
+
+function renderProfile(obj, template) {
+  const fields = (template && template.length) ? template : Object.keys(obj)
+  return fields
+    .filter((k) => obj[k] != null && String(obj[k]).length)
+    .map((k) => `${k}: ${obj[k]}`)
+    .join('\n')
+}
+
+function capText(s, max) {
+  s = String(s == null ? '' : s)
+  return s.length <= max ? s : s.slice(0, max)
+}
+
+function mergeProfile(currentContent, patch, template, maxChars) {
+  const obj = parseProfile(currentContent)
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (v == null || String(v).trim() === '') delete obj[k]
+    else obj[k] = String(v).trim()
+  }
+  return capText(renderProfile(obj, template), maxChars)
+}
+
+module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates, parseProfile, renderProfile, capText, mergeProfile }
