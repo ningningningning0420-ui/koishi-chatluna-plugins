@@ -4,19 +4,27 @@
   "version": "0.0.1",
   "main": "index.js",
   "license": "MIT",
+  "files": ["index.js", "lib.js", "dist", "client", "README.md"],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "build:client": "koishi-console build"
+  },
+  "koishi": {
+    "description": { "zh": "给角色按人组织、可调可修的人格化记忆工具(livingmemory 伴生层)" },
+    "browser": true,
+    "icon": "mdi:account-details",
+    "service": { "required": ["chatluna", "database", "chatluna_living_memory"], "optional": ["chatluna_character", "console"] }
   },
   "peerDependencies": {
     "koishi": "^4.18.0",
-    "koishi-plugin-chatluna": "^1.4.0-alpha.23"
+    "koishi-plugin-chatluna": "^1.4.0-alpha.23",
+    "@koishijs/plugin-console": "^5.30.11"
   },
   "dependencies": {
     "@langchain/core": "*",
     "zod": "*"
   },
-  "koishi": {
-    "description": { "zh": "给角色按人组织、可调可修的人格化记忆工具(livingmemory 伴生层)" },
-    "service": { "required": ["chatluna", "database", "chatluna_living_memory"], "optional": ["chatluna_character"] }
+  "devDependencies": {
+    "@koishijs/client": "^5.30.11"
   }
 }

@@ -1,4 +1,5 @@
 'use strict'
+const { resolve } = require('path')
 const { Schema } = require('koishi')
 const { ChatLunaPlugin } = require('koishi-plugin-chatluna/services/chat')
 const { tool } = require('@langchain/core/tools')
@@ -271,6 +272,19 @@ exports.apply = (ctx, config) => {
         return [header, body].filter(Boolean).join('\n\n')
       }))
   }
+
+  const PKG = 'koishi-plugin-chatluna-memory-curator'
+  function consoleEntryPaths() {
+    const baseDir = (ctx.loader && ctx.loader.baseDir) || process.cwd()
+    return {
+      dev: resolve(baseDir, 'node_modules', PKG, 'client', 'index.ts'),
+      prod: resolve(baseDir, 'node_modules', PKG, 'dist')
+    }
+  }
+  ctx.inject(['console'], (ctx2) => {
+    ctx2.console.addEntry(consoleEntryPaths())
+    ctx2.logger('chatluna-memory-curator').info('console panel entry registered')
+  })
 
   ctx.effect(() => () => {
     groupInfoCache.clear()
