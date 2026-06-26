@@ -103,9 +103,74 @@ exports.apply = (ctx, config) => {
     })
   })
 
+  async function embedQuery(text) {
+    try {
+      const emb = await ctx.chatluna.createEmbeddings(config.embeddingModel)
+      if (!emb || emb.value == null) return null
+      return await emb.value.embedQuery(text)
+    } catch (e) { return null }
+  }
+
+  const recallTool = tool(async (input, runConfig) => {
+    const session = runConfig?.configurable?.session
+    if (!session) return '[系统] 无会话上下文。'
+    const scope = scopeOf(session)
+    const where = { presetId: scope.presetId, memKind: 'fact', status: { $ne: 'superseded' } }
+    if (input.entity) where.entity = input.entity
+    const rows = await ctx.database.get(TABLE, where)
+    if (!rows.length) return '（没有相关记忆）'
+    const queryVec = input.query ? await embedQuery(input.query) : null
+    const cands = rows.map((row) => ({ row, embedding: row.embedding }))
+    const top = lib.rankCandidates(cands, queryVec, Date.now(),
+      { weights: config.weights, tau: config.recencyTau, topK: config.recallTopK })
+    if (top.length) {
+      const now = new Date()
+      await ctx.database.set(TABLE, { id: { $in: top.map((r) => r.id) } }, { lastAccessedAt: now })
+    }
+    return top.map((r) => `- [id:${r.id}] ${r.content}`).join('\n')
+  }, {
+    name: 'recall',
+    description: config.toolDescriptions.recall,
+    schema: z.object({
+      entity: z.string().optional().describe('只查某人(平台:号),可省'),
+      query: z.string().optional().describe('语义检索词,可省')
+    })
+  })
+
+  const rememberTool = tool(async (input, runConfig) => {
+    const session = runConfig?.configurable?.session
+    if (!session) return '[系统] 无会话上下文。'
+    if (!canWrite(session)) return '[系统] 无权写记忆。'
+    const scope = scopeOf(session)
+    const created = await svc.createMemory(scope, { type: 'fact', content: input.content, importance: input.importance ?? 0.5 })
+    await ctx.database.set(TABLE, { id: created.id }, { entity: input.entity, memKind: 'fact' })
+    return `[系统] 记下了(id:${created.id})。`
+  }, {
+    name: 'remember',
+    description: config.toolDescriptions.remember,
+    schema: z.object({
+      entity: z.string().describe('这条事实关于谁(平台:号)'),
+      content: z.string().describe('事实内容'),
+      importance: z.number().min(0).max(1).optional().describe('重要度 0–1,默认 0.5')
+    })
+  })
+
+  const forgetTool = tool(async (input, runConfig) => {
+    const session = runConfig?.configurable?.session
+    if (!session) return '[系统] 无会话上下文。'
+    if (!canWrite(session)) return '[系统] 无权改记忆。'
+    await ctx.database.set(TABLE, { id: input.id }, { status: 'superseded', updatedAt: new Date() })
+    return `[系统] 已忘掉 id:${input.id}(软删,可在 WebUI 恢复)。`
+  }, {
+    name: 'forget',
+    description: config.toolDescriptions.forget,
+    schema: z.object({ id: z.string().describe('要忘的记忆 id(从 recall 结果取)') })
+  })
+
   const plugin = new ChatLunaPlugin(ctx, config, 'memory-curator', false)
   ctx.on('ready', () => {
-    for (const [name, t] of [['get_profile', getProfileTool], ['set_profile', setProfileTool]]) {
+    for (const [name, t] of [['get_profile', getProfileTool], ['set_profile', setProfileTool],
+        ['recall', recallTool], ['remember', rememberTool], ['forget', forgetTool]]) {
       plugin.registerTool(name, {
         selector() { return true },
         authorization(session) { return true },
