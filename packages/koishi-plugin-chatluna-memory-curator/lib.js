@@ -30,4 +30,23 @@ function inferEntityFromRow(row, platform) {
   return null
 }
 
-module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow }
+function threeFactorScore({ relevance, importance, recencyHours }, weights, tau) {
+  const rec = Math.exp(-recencyHours / tau)
+  return weights.rel * relevance + weights.imp * importance + weights.rec * rec
+}
+
+function rankCandidates(candidates, queryVec, nowMs, opts) {
+  const { weights, tau, topK } = opts
+  const rawRel = candidates.map((c) => (queryVec ? cosineSimilarity(queryVec, c.embedding) : 0))
+  const normRel = minMaxNormalize(rawRel)
+  const scored = candidates.map((c, i) => {
+    const importance = c.row.importance == null ? 0.5 : c.row.importance
+    const recencyHours = Math.max(0, (nowMs - new Date(c.row.updatedAt).getTime()) / 3600_000)
+    const _score = threeFactorScore({ relevance: normRel[i], importance, recencyHours }, weights, tau)
+    return { ...c.row, _score }
+  })
+  scored.sort((a, b) => b._score - a._score)
+  return scored.slice(0, topK)
+}
+
+module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates }
