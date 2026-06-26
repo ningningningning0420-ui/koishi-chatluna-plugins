@@ -83,4 +83,14 @@ function mergeProfile(currentContent, patch, template, maxChars) {
   return capText(renderProfile(obj, template), maxChars)
 }
 
-module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates, parseProfile, renderProfile, capText, mergeProfile }
+function selectPresent(recentSpeakerEntities, profilesByEntity, cap) {
+  const out = []
+  for (const entity of recentSpeakerEntities) {
+    if (out.length >= cap) break
+    const content = profilesByEntity.get(entity)
+    if (content != null) out.push({ entity, content })
+  }
+  return out
+}
+
+module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow, threeFactorScore, rankCandidates, parseProfile, renderProfile, capText, mergeProfile, selectPresent }

@@ -68,3 +68,10 @@ test('mergeProfile: 合并新字段, null 删字段, 封顶', () => {
   assert.equal(removed, '称呼: 阿江')
   assert.equal(lib.capText('abcdef', 3), 'abc')
 })
+
+test('selectPresent: 保留 recency 顺序, 仅有档案者, 截 cap', () => {
+  const profiles = new Map([['onebot:1', 'A'], ['onebot:3', 'C']])
+  const out = lib.selectPresent(['onebot:1', 'onebot:2', 'onebot:3'], profiles, 5)
+  assert.deepEqual(out, [{ entity: 'onebot:1', content: 'A' }, { entity: 'onebot:3', content: 'C' }])
+  assert.equal(lib.selectPresent(['onebot:1', 'onebot:3'], profiles, 1).length, 1)
+})
