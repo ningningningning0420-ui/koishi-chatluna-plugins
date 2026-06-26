@@ -1,0 +1,10 @@
+import { send } from '@koishijs/client'
+export const listEntities = (q = {}) => send('memory-curator/listEntities', q)
+export const getPerson = (entity: string) => send('memory-curator/getPerson', { entity })
+export const stats = () => send('memory-curator/stats')
+export const setProfile = (entity: string, patch: Record<string, string>) => send('memory-curator/setProfile', { entity, patch })
+export const createPerson = (entity: string, patch: Record<string, string>) => send('memory-curator/createPerson', { entity, patch })
+export const remember = (entity: string, content: string, importance?: number) => send('memory-curator/remember', { entity, content, importance })
+export const updateFact = (id: string, content?: string, importance?: number) => send('memory-curator/updateFact', { id, content, importance })
+export const forget = (id: string) => send('memory-curator/forget', { id })
+export const restore = (id: string) => send('memory-curator/restore', { id })
