@@ -53,6 +53,15 @@ test('rankCandidates: queryVec=null 时退化为 imp+rec', () => {
   assert.equal(out[0].id, 'a')
 })
 
+test('rankCandidates: 输出只含 id/content/_score, 绝不泄漏 embedding 等大字段', () => {
+  const now = 1_000_000_000_000
+  const cands = [{ row: { id: 'x', content: 'hi', importance: 0.5, updatedAt: new Date(now), embedding: [1, 2, 3], sourceMessages: 'big' }, embedding: [1, 2, 3] }]
+  const out = lib.rankCandidates(cands, [1, 2, 3], now, { weights: { rel: 1, imp: 1, rec: 1 }, tau: 72, topK: 5 })
+  assert.deepEqual(Object.keys(out[0]).sort(), ['_score', 'content', 'id'])
+  assert.equal(out[0].embedding, undefined)
+  assert.equal(out[0].content, 'hi')
+})
+
 test('parseProfile/renderProfile 往返', () => {
   const obj = lib.parseProfile('称呼: 阿江\n好感度: 70')
   assert.deepEqual(obj, { 称呼: '阿江', 好感度: '70' })

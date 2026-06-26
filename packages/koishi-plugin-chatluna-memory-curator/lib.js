@@ -43,7 +43,8 @@ function rankCandidates(candidates, queryVec, nowMs, opts) {
     const importance = c.row.importance == null ? 0.5 : c.row.importance
     const recencyHours = Math.max(0, (nowMs - new Date(c.row.updatedAt).getTime()) / 3600_000)
     const _score = threeFactorScore({ relevance: normRel[i], importance, recencyHours }, weights, tau)
-    return { ...c.row, _score }
+    // 只保留下游需要的字段:绝不把 embedding 等大字段随候选行带出(防泄漏进 prompt)
+    return { id: c.row.id, content: c.row.content, _score }
   })
   scored.sort((a, b) => b._score - a._score)
   return scored.slice(0, topK)

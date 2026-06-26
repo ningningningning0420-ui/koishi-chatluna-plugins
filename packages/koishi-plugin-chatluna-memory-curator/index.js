@@ -12,6 +12,7 @@ exports.Config = Schema.object({
     .description('档案字段模板:决定一份档案记哪些维度,按角色改'),
   profileMaxChars: Schema.number().default(600).min(100).description('单份档案封顶字符数'),
   recallTopK: Schema.number().default(6).min(1).max(30).description('recall 工具返回的事实条数'),
+  candidatePoolCap: Schema.number().default(300).min(10).description('recall 无 entity 时的候选池上限(按最近截断,防全表向量拉取)'),
   weights: Schema.object({
     rel: Schema.number().default(1), imp: Schema.number().default(1), rec: Schema.number().default(1)
   }).description('三因子权重(相关/重要/新近)'),
@@ -117,10 +118,24 @@ exports.apply = (ctx, config) => {
     const scope = scopeOf(session)
     const where = { presetId: scope.presetId, memKind: 'fact', status: { $ne: 'superseded' } }
     if (input.entity) where.entity = input.entity
-    const rows = await ctx.database.get(TABLE, where)
-    if (!rows.length) return '（没有相关记忆）'
+    // 第一步:只取轻量字段(绝不批量带出 embedding 向量),按最近截断成有界候选池
+    const lite = await ctx.database.get(TABLE, where, ['id', 'content', 'importance', 'updatedAt'])
+    if (!lite.length) return '（没有相关记忆）'
+    const pool = lite
+      .slice()
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, config.candidatePoolCap)
+    // 第二步:仅在有 query 时,才为候选池(数量受 cap 约束)按 id 补 embedding 算相关度,用完即弃
     const queryVec = input.query ? await embedQuery(input.query) : null
-    const cands = rows.map((row) => ({ row, embedding: row.embedding }))
+    let cands
+    if (queryVec) {
+      const ids = pool.map((r) => r.id)
+      const embRows = await ctx.database.get(TABLE, { id: { $in: ids } }, ['id', 'embedding'])
+      const embMap = new Map(embRows.map((r) => [r.id, r.embedding]))
+      cands = pool.map((r) => ({ row: r, embedding: embMap.get(r.id) }))
+    } else {
+      cands = pool.map((r) => ({ row: r, embedding: null }))
+    }
     const top = lib.rankCandidates(cands, queryVec, Date.now(),
       { weights: config.weights, tau: config.recencyTau, topK: config.recallTopK })
     if (top.length) {
