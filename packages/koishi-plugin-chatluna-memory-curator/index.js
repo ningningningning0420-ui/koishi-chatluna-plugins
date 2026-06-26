@@ -144,6 +144,8 @@ exports.apply = (ctx, config) => {
     const scope = scopeOf(session)
     const created = await svc.createMemory(scope, { type: 'fact', content: input.content, importance: input.importance ?? 0.5 })
     await ctx.database.set(TABLE, { id: created.id }, { entity: input.entity, memKind: 'fact' })
+    const vec = await embedQuery(input.content)
+    if (vec) await ctx.database.set(TABLE, { id: created.id }, { embedding: vec, embeddingModelId: config.embeddingModel })
     return `[系统] 记下了(id:${created.id})。`
   }, {
     name: 'remember',
@@ -159,7 +161,7 @@ exports.apply = (ctx, config) => {
     const session = runConfig?.configurable?.session
     if (!session) return '[系统] 无会话上下文。'
     if (!canWrite(session)) return '[系统] 无权改记忆。'
-    await ctx.database.set(TABLE, { id: input.id }, { status: 'superseded', updatedAt: new Date() })
+    await ctx.database.set(TABLE, { id: input.id, presetId: scopeOf(session).presetId }, { status: 'superseded', updatedAt: new Date() })
     return `[系统] 已忘掉 id:${input.id}(软删,可在 WebUI 恢复)。`
   }, {
     name: 'forget',
@@ -172,6 +174,7 @@ exports.apply = (ctx, config) => {
     for (const [name, t] of [['get_profile', getProfileTool], ['set_profile', setProfileTool],
         ['recall', recallTool], ['remember', rememberTool], ['forget', forgetTool]]) {
       plugin.registerTool(name, {
+        description: t.description,
         selector() { return true },
         authorization(session) { return true },
         meta: { source: 'extension', group: 'memory-curator', tags: ['memory'],
@@ -228,9 +231,8 @@ exports.apply = (ctx, config) => {
     return out
   }
 
-  ctx.on('ready', () => {
-    if (!config.present.autoSurface) return
-    ctx.chatluna.promptRenderer.registerFunctionProvider(config.present.variableName,
+  if (config.present.autoSurface) {
+    ctx.effect(() => ctx.chatluna.promptRenderer.registerFunctionProvider(config.present.variableName,
       async (_args, _vars, configurable) => {
         const session = configurable && configurable.session
         if (!session) return ''
@@ -245,11 +247,10 @@ exports.apply = (ctx, config) => {
           : `群规模 约${count ?? '?'}人 · 近期活跃${ents.length}人 · 你认识其中${present.length}人`
         const body = present.map((p) => `【${p.entity}】\n${p.content}`).join('\n\n')
         return [header, body].filter(Boolean).join('\n\n')
-      })
-  })
+      }))
+  }
 
   ctx.effect(() => () => {
-    try { ctx.chatluna.promptRenderer.removeVariable(config.present.variableName) } catch (e) {}
     groupInfoCache.clear()
   })
 }
