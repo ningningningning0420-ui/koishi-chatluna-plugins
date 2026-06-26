@@ -15,3 +15,17 @@ test('minMaxNormalize: 线性映射到[0,1], 全相等→全1', () => {
   assert.deepEqual(lib.minMaxNormalize([3, 3, 3]), [1, 1, 1])
   assert.deepEqual(lib.minMaxNormalize([]), [])
 })
+
+test('toEntity: 拼平台:号, 空号→null', () => {
+  assert.equal(lib.toEntity('onebot', '123'), 'onebot:123')
+  assert.equal(lib.toEntity('onebot', null), null)
+  assert.equal(lib.toEntity('onebot', ''), null)
+})
+
+test('inferEntityFromRow: 取最后一条有 id 的发言者', () => {
+  const row = { sourceMessages: [{ id: '111', content: 'a' }, { id: '222', content: 'b' }], sourceConversationId: 'group:9' }
+  assert.equal(lib.inferEntityFromRow(row, 'onebot'), 'onebot:222')
+  assert.equal(lib.inferEntityFromRow({ sourceMessages: [] }, 'onebot'), null)
+  assert.equal(lib.inferEntityFromRow({ sourceMessages: [{ name: '无id' }] }, 'onebot'), null)
+  assert.equal(lib.inferEntityFromRow({}, 'onebot'), null)
+})

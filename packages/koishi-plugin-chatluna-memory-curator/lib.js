@@ -16,4 +16,18 @@ function minMaxNormalize(values) {
   return values.map((v) => (v - min) / (max - min))
 }
 
-module.exports = { cosineSimilarity, minMaxNormalize }
+function toEntity(platform, userId) {
+  const id = userId == null ? '' : String(userId).trim()
+  return id.length ? `${platform}:${id}` : null
+}
+
+function inferEntityFromRow(row, platform) {
+  const msgs = (row && Array.isArray(row.sourceMessages)) ? row.sourceMessages : []
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const id = msgs[i] && msgs[i].id
+    if (id != null && String(id).trim().length) return toEntity(platform, id)
+  }
+  return null
+}
+
+module.exports = { cosineSimilarity, minMaxNormalize, toEntity, inferEntityFromRow }
