@@ -1,5 +1,9 @@
 'use strict'
 const { Schema } = require('koishi')
+const { ChatLunaPlugin } = require('koishi-plugin-chatluna/services/chat')
+const { tool } = require('@langchain/core/tools')
+const { z } = require('zod')
+const lib = require('./lib')
 exports.name = 'chatluna-memory-curator'
 exports.inject = { required: ['chatluna', 'database', 'chatluna_living_memory'], optional: ['chatluna_character'] }
 exports.Config = Schema.object({
@@ -43,4 +47,73 @@ exports.apply = (ctx, config) => {
     lastAccessedAt: { type: 'timestamp', nullable: true, initial: null }
   })
   logger.info('memory-curator: extended %s with entity/memKind/lastAccessedAt', TABLE)
+
+  const svc = ctx.chatluna_living_memory
+
+  function scopeOf(session) {
+    const presetId = svc.resolvePresetId(session, undefined)
+    return svc.createScope(session.cid, presetId, session.userId, session.channelId, {})
+  }
+  async function getProfileRow(presetId, entity) {
+    const rows = await ctx.database.get(TABLE, { presetId, entity, memKind: 'profile' })
+    return rows[0] || null
+  }
+  async function setProfile(session, entity, patch) {
+    const scope = scopeOf(session)
+    const row = await getProfileRow(scope.presetId, entity)
+    const merged = lib.mergeProfile(row ? row.content : '', patch, config.profileFields, config.profileMaxChars)
+    if (row) {
+      await ctx.database.set(TABLE, { id: row.id }, { content: merged, updatedAt: new Date() })
+    } else {
+      const created = await svc.createMemory(scope, { type: 'identity', content: merged, importance: 0.6 })
+      await ctx.database.set(TABLE, { id: created.id }, { entity, memKind: 'profile', updatedAt: new Date() })
+    }
+    return merged
+  }
+
+  function canWrite(session) {
+    const wl = config.triggerWhitelist
+    return !wl || wl.length === 0 || wl.includes(String(session.userId))
+  }
+
+  const getProfileTool = tool(async (input, runConfig) => {
+    const session = runConfig?.configurable?.session
+    if (!session) return '[系统] 无会话上下文。'
+    const scope = scopeOf(session)
+    const row = await getProfileRow(scope.presetId, input.entity)
+    return row ? row.content : `（还没有关于 ${input.entity} 的档案）`
+  }, {
+    name: 'get_profile',
+    description: config.toolDescriptions.get_profile,
+    schema: z.object({ entity: z.string().describe('人标识,格式 平台:号,如 onebot:123456') })
+  })
+
+  const setProfileTool = tool(async (input, runConfig) => {
+    const session = runConfig?.configurable?.session
+    if (!session) return '[系统] 无会话上下文。'
+    if (!canWrite(session)) return '[系统] 无权写记忆。'
+    const merged = await setProfile(session, input.entity, input.patch || {})
+    return `[系统] 已更新 ${input.entity} 的档案:\n${merged}`
+  }, {
+    name: 'set_profile',
+    description: config.toolDescriptions.set_profile,
+    schema: z.object({
+      entity: z.string().describe('人标识,格式 平台:号'),
+      patch: z.record(z.string()).describe(`要改的字段→值;空值表示删除该字段。可用字段:${config.profileFields.join('、')}`)
+    })
+  })
+
+  const plugin = new ChatLunaPlugin(ctx, config, 'memory-curator', false)
+  ctx.on('ready', () => {
+    for (const [name, t] of [['get_profile', getProfileTool], ['set_profile', setProfileTool]]) {
+      plugin.registerTool(name, {
+        selector() { return true },
+        authorization(session) { return true },
+        meta: { source: 'extension', group: 'memory-curator', tags: ['memory'],
+          defaultAvailability: { enabled: true, main: true, chatluna: true, characterScope: 'all' } },
+        createTool() { return t }
+      })
+    }
+    ctx.logger('chatluna-memory-curator').info('profile tools registered')
+  })
 }
