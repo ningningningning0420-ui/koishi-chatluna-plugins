@@ -247,4 +247,9 @@ exports.apply = (ctx, config) => {
         return [header, body].filter(Boolean).join('\n\n')
       })
   })
+
+  ctx.effect(() => () => {
+    try { ctx.chatluna.promptRenderer.removeVariable(config.present.variableName) } catch (e) {}
+    groupInfoCache.clear()
+  })
 }
