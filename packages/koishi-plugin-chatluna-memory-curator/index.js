@@ -181,4 +181,21 @@ exports.apply = (ctx, config) => {
     }
     ctx.logger('chatluna-memory-curator').info('profile tools registered')
   })
+
+  async function backfillSweep() {
+    try {
+      const rows = await ctx.database.get(TABLE, { memKind: null })
+      let n = 0
+      for (const row of rows) {
+        const entity = lib.inferEntityFromRow(row, config.platform)
+        await ctx.database.set(TABLE, { id: row.id }, { memKind: 'fact', entity: entity || null })
+        if (entity) n++
+      }
+      if (config.debug) ctx.logger('chatluna-memory-curator').info('backfill: %d 行,其中 %d 标到 entity', rows.length, n)
+    } catch (e) {
+      ctx.logger('chatluna-memory-curator').warn('backfill 失败:%s', (e && e.message) || e)
+    }
+  }
+  ctx.on('ready', () => { backfillSweep() })
+  ctx.setInterval(() => backfillSweep(), 1000 * 60 * config.backfillIntervalMinutes)
 }
