@@ -9,8 +9,8 @@ exports.name = 'chatluna-memory-curator'
 exports.inject = { required: ['chatluna', 'database', 'chatluna_living_memory'], optional: ['chatluna_character'] }
 exports.Config = Schema.object({
   platform: Schema.string().default('onebot').description('entity 前缀用的平台名,与适配器一致'),
-  profileFields: Schema.array(Schema.string()).default(['称呼', '好感度', '关键印象', '在意的事'])
-    .description('档案字段模板:决定一份档案记哪些维度,按角色改'),
+  profileFields: Schema.array(Schema.string()).default(['称呼', '好感度', '关键印象', '在意的事', '称呼习惯'])
+    .description('档案字段模板(称呼可多别名;称呼习惯记此人对人的称呼方式,如「管朋友叫老公但不这样叫bot」)'),
   profileMaxChars: Schema.number().default(600).min(100).description('单份档案封顶字符数'),
   recallTopK: Schema.number().default(6).min(1).max(30).description('recall 工具返回的事实条数'),
   candidatePoolCap: Schema.number().default(300).min(10).description('recall 无 entity 时的候选池上限(按最近截断,防全表向量拉取)'),
@@ -307,6 +307,35 @@ exports.apply = (ctx, config) => {
       const facts = await ctx.database.get(TABLE, { presetId: pid, memKind: 'fact', status: { $ne: 'superseded' } }, ['id'])
       return { people: new Set(profiles.map((p) => p.entity)).size, profiles: profiles.length, facts: facts.length }
     })
+    function scopeShared() { const pid = config.sharedPresetId; return pid ? svc.createScope('console', pid, 'console', 'console', {}) : null }
+    ctx2.console.addListener('memory-curator/setProfile', async ({ entity, patch }) => {
+      const scope = scopeShared(); if (!scope || !scope.presetId) return { ok: false }
+      const row = (await ctx.database.get(TABLE, { presetId: scope.presetId, entity, memKind: 'profile' }))[0]
+      const merged = lib.mergeProfile(row ? row.content : '', patch || {}, config.profileFields, config.profileMaxChars)
+      if (row) await ctx.database.set(TABLE, { id: row.id }, { content: merged, updatedAt: new Date() })
+      else { const c = await svc.createMemory(scope, { type: 'identity', content: merged, importance: 0.6 }); await ctx.database.set(TABLE, { id: c.id }, { entity, memKind: 'profile' }) }
+      return { ok: true }
+    })
+    ctx2.console.addListener('memory-curator/createPerson', async ({ entity, patch }) => {
+      const scope = scopeShared(); if (!scope || !scope.presetId) return { ok: false }
+      const merged = lib.mergeProfile('', patch || {}, config.profileFields, config.profileMaxChars)
+      const c = await svc.createMemory(scope, { type: 'identity', content: merged, importance: 0.6 })
+      await ctx.database.set(TABLE, { id: c.id }, { entity, memKind: 'profile' })
+      return { ok: true }
+    })
+    ctx2.console.addListener('memory-curator/remember', async ({ entity, content, importance }) => {
+      const scope = scopeShared(); if (!scope || !scope.presetId) return { ok: false }
+      const c = await svc.createMemory(scope, { type: 'fact', content, importance: importance == null ? 0.5 : importance })
+      await ctx.database.set(TABLE, { id: c.id }, { entity, memKind: 'fact' })
+      const vec = await embedQuery(content); if (vec) await ctx.database.set(TABLE, { id: c.id }, { embedding: vec, embeddingModelId: config.embeddingModel })
+      return { ok: true }
+    })
+    ctx2.console.addListener('memory-curator/updateFact', async ({ id, content, importance }) => {
+      const patch = {}; if (content != null) patch.content = content; if (importance != null) patch.importance = importance; patch.updatedAt = new Date()
+      await ctx.database.set(TABLE, { id, presetId: config.sharedPresetId }, patch); return { ok: true }
+    })
+    ctx2.console.addListener('memory-curator/forget', async ({ id }) => { await ctx.database.set(TABLE, { id, presetId: config.sharedPresetId }, { status: 'superseded', updatedAt: new Date() }); return { ok: true } })
+    ctx2.console.addListener('memory-curator/restore', async ({ id }) => { await ctx.database.set(TABLE, { id, presetId: config.sharedPresetId }, { status: 'active', updatedAt: new Date() }); return { ok: true } })
     ctx2.logger('chatluna-memory-curator').info('console panel entry + read listeners registered')
   })
 
