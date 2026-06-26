@@ -34,4 +34,13 @@ exports.Config = Schema.object({
   }).description('5 个工具的说明(可按角色改写)'),
   debug: Schema.boolean().default(false)
 })
-exports.apply = (ctx) => {}
+const TABLE = 'living_memory_entry'
+exports.apply = (ctx, config) => {
+  const logger = ctx.logger('chatluna-memory-curator')
+  ctx.model.extend(TABLE, {
+    entity: { type: 'string', length: 64, nullable: true, initial: null },
+    memKind: { type: 'string', length: 16, nullable: true, initial: null },
+    lastAccessedAt: { type: 'timestamp', nullable: true, initial: null }
+  })
+  logger.info('memory-curator: extended %s with entity/memKind/lastAccessedAt', TABLE)
+}
