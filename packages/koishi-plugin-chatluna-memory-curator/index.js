@@ -18,6 +18,7 @@ exports.Config = Schema.object({
   }).description('三因子权重(相关/重要/新近)'),
   recencyTau: Schema.number().default(72).min(1).description('recency 半衰小时数'),
   embeddingModel: Schema.string().default('ollama/bge-m3:latest').description('relevance 用的嵌入模型(建议与 livingmemory 同一个)'),
+  sharedPresetId: Schema.string().default('').description('兜底 presetId:工具上下文解析不出预设时用它(填 scene-rules 统一的共享池 key,如「髭切-通用版（Character）」)。留空则解析失败时拒写,绝不写 null 污染 livingmemory'),
   present: Schema.object({
     autoSurface: Schema.boolean().default(true).description('在场者档案自动浮出(关=改为 who_is_here 工具按需)'),
     cap: Schema.number().default(6).min(1).description('在场者档案上限 M'),
@@ -52,7 +53,10 @@ exports.apply = (ctx, config) => {
   const svc = ctx.chatluna_living_memory
 
   function scopeOf(session) {
-    const presetId = svc.resolvePresetId(session, undefined)
+    // 工具上下文里 resolvePresetId 常解析不出预设(返回 undefined),不能让它落成 null presetId
+    // ——那会污染 livingmemory 表并搞崩其 WebUI 的 listDistinctPresetIds。用配置的共享池兜底。
+    let presetId = svc.resolvePresetId(session, undefined)
+    if (!presetId) presetId = config.sharedPresetId || null
     return svc.createScope(session.cid, presetId, session.userId, session.channelId, {})
   }
   async function getProfileRow(presetId, entity) {
@@ -61,6 +65,7 @@ exports.apply = (ctx, config) => {
   }
   async function setProfile(session, entity, patch) {
     const scope = scopeOf(session)
+    if (!scope.presetId) return null // 无法确定作用域,拒写(绝不写 null presetId)
     const row = await getProfileRow(scope.presetId, entity)
     const merged = lib.mergeProfile(row ? row.content : '', patch, config.profileFields, config.profileMaxChars)
     if (row) {
@@ -94,6 +99,7 @@ exports.apply = (ctx, config) => {
     if (!session) return '[系统] 无会话上下文。'
     if (!canWrite(session)) return '[系统] 无权写记忆。'
     const merged = await setProfile(session, input.entity, input.patch || {})
+    if (merged == null) return '[系统] 无法确定记忆作用域(请在插件配置里填 sharedPresetId),未写入。'
     return `[系统] 已更新 ${input.entity} 的档案:\n${merged}`
   }, {
     name: 'set_profile',
@@ -157,6 +163,7 @@ exports.apply = (ctx, config) => {
     if (!session) return '[系统] 无会话上下文。'
     if (!canWrite(session)) return '[系统] 无权写记忆。'
     const scope = scopeOf(session)
+    if (!scope.presetId) return '[系统] 无法确定记忆作用域(请在插件配置里填 sharedPresetId),未写入。'
     const created = await svc.createMemory(scope, { type: 'fact', content: input.content, importance: input.importance ?? 0.5 })
     await ctx.database.set(TABLE, { id: created.id }, { entity: input.entity, memKind: 'fact' })
     const vec = await embedQuery(input.content)
