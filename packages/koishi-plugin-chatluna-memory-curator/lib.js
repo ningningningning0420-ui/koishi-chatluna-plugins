@@ -22,12 +22,12 @@ function toEntity(platform, userId) {
 }
 
 function inferEntityFromRow(row, platform) {
-  const msgs = (row && Array.isArray(row.sourceMessages)) ? row.sourceMessages : []
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const id = msgs[i] && msgs[i].id
-    if (id != null && String(id).trim().length) return toEntity(platform, id)
+  const conv = row && row.sourceConversationId
+  if (typeof conv === 'string') {
+    const m = conv.match(/^private:(.+)$/)
+    if (m) return toEntity(platform, m[1])
   }
-  return null
+  return null // 群聊 fact 的发言者号无法从 livingmemory 持久化结构还原,留空靠模型 remember(entity) 兜
 }
 
 function threeFactorScore({ relevance, importance, recencyHours }, weights, tau) {

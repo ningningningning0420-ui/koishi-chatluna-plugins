@@ -22,11 +22,9 @@ test('toEntity: 拼平台:号, 空号→null', () => {
   assert.equal(lib.toEntity('onebot', ''), null)
 })
 
-test('inferEntityFromRow: 取最后一条有 id 的发言者', () => {
-  const row = { sourceMessages: [{ id: '111', content: 'a' }, { id: '222', content: 'b' }], sourceConversationId: 'group:9' }
-  assert.equal(lib.inferEntityFromRow(row, 'onebot'), 'onebot:222')
-  assert.equal(lib.inferEntityFromRow({ sourceMessages: [] }, 'onebot'), null)
-  assert.equal(lib.inferEntityFromRow({ sourceMessages: [{ name: '无id' }] }, 'onebot'), null)
+test('inferEntityFromRow: 私聊从 sourceConversationId 取对象, 群聊/缺失→null', () => {
+  assert.equal(lib.inferEntityFromRow({ sourceConversationId: 'private:222' }, 'onebot'), 'onebot:222')
+  assert.equal(lib.inferEntityFromRow({ sourceConversationId: 'group:9' }, 'onebot'), null)
   assert.equal(lib.inferEntityFromRow({}, 'onebot'), null)
 })
 
