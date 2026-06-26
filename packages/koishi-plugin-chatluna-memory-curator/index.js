@@ -198,4 +198,53 @@ exports.apply = (ctx, config) => {
   }
   ctx.on('ready', () => { backfillSweep() })
   ctx.setInterval(() => backfillSweep(), 1000 * 60 * config.backfillIntervalMinutes)
+
+  const groupInfoCache = new Map() // guildId -> { count, at }
+  async function getGroupCount(session) {
+    if (session.isDirect) return null
+    const gid = session.guildId
+    const cached = groupInfoCache.get(gid)
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached.count
+    try {
+      const info = await session.bot.internal._request('get_group_info', { group_id: Number(gid), no_cache: false })
+      const count = info?.data?.member_count ?? info?.member_count ?? null
+      groupInfoCache.set(gid, { count, at: Date.now() })
+      return count
+    } catch (e) { return null }
+  }
+
+  function recentSpeakerEntities(session) {
+    const cc = ctx.chatluna_character
+    if (!cc || typeof cc.getMessages !== 'function') return []
+    const key = session.isDirect ? `private:${session.userId}` : `group:${session.guildId}`
+    let arr = []
+    try { arr = cc.getMessages(key) || [] } catch (e) { arr = [] }
+    const seen = new Set(), out = []
+    for (let i = arr.length - 1; i >= 0 && out.length < config.present.windowN; i--) {
+      const id = arr[i] && arr[i].id
+      const ent = lib.toEntity(config.platform, id)
+      if (ent && !seen.has(ent)) { seen.add(ent); out.push(ent) }
+    }
+    return out
+  }
+
+  ctx.on('ready', () => {
+    if (!config.present.autoSurface) return
+    ctx.chatluna.promptRenderer.registerFunctionProvider(config.present.variableName,
+      async (_args, _vars, configurable) => {
+        const session = configurable && configurable.session
+        if (!session) return ''
+        const ents = recentSpeakerEntities(session)
+        if (!ents.length) return ''
+        const scope = scopeOf(session)
+        const rows = await ctx.database.get(TABLE, { presetId: scope.presetId, entity: { $in: ents }, memKind: 'profile' })
+        const map = new Map(rows.map((r) => [r.entity, r.content]))
+        const present = lib.selectPresent(ents, map, config.present.cap)
+        const count = await getGroupCount(session)
+        const header = session.isDirect ? null
+          : `群规模 约${count ?? '?'}人 · 近期活跃${ents.length}人 · 你认识其中${present.length}人`
+        const body = present.map((p) => `【${p.entity}】\n${p.content}`).join('\n\n')
+        return [header, body].filter(Boolean).join('\n\n')
+      })
+  })
 }
