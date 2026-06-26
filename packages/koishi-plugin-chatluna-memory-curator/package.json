@@ -1,0 +1,22 @@
+{
+  "name": "koishi-plugin-chatluna-memory-curator",
+  "description": "给 chatluna-character 角色按人组织、可调可修的人格化记忆工具(livingmemory 伴生层)",
+  "version": "0.0.1",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  },
+  "peerDependencies": {
+    "koishi": "^4.18.0",
+    "koishi-plugin-chatluna": "^1.4.0-alpha.23"
+  },
+  "dependencies": {
+    "@langchain/core": "*",
+    "zod": "*"
+  },
+  "koishi": {
+    "description": { "zh": "给角色按人组织、可调可修的人格化记忆工具(livingmemory 伴生层)" },
+    "service": { "required": ["chatluna", "database", "chatluna_living_memory"], "optional": ["chatluna_character"] }
+  }
+}
