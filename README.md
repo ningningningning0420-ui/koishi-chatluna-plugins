@@ -1,7 +1,7 @@
 # koishi-chatluna-plugins
 
 给 [Koishi](https://koishi.chat) + [ChatLuna](https://github.com/ChatLunaLab/chatluna) 角色 bot 写的几个小插件,
-配合 ChatLuna 的角色对话 / 表情 / 长期记忆体系使用。四个插件互相独立,按需取用。
+配合 ChatLuna 的角色对话 / 表情 / 长期记忆体系使用。这些插件互相独立,按需取用。
 
 > 都已(或可)发布到 npm,在 Koishi 控制台**插件市场**搜对应名字即可安装;也支持放到 koishi app 的
 > `external/` 下用 `file:` 依赖从源码加载。每个插件目录内有独立 README,`docs/` 下有更详细的
@@ -15,6 +15,7 @@
 | `koishi-plugin-emoji-intents` | `{emoji_intents}` | emoji-recall 的**姊妹方案**:只注入标签/分类词表,模型挑意图、服务器随机选图;最省 token、无需向量模型(与 emoji-recall 二选一) | [README](packages/koishi-plugin-emoji-intents/README.md) |
 | **`koishi-plugin-chatluna-scene-rules`** | livingmemory 记忆池别名器 | 把同一角色的多个预设(私聊版 / 群聊版 / 语音版…)的 `presetId` 映射到**同一个共享记忆池 key**,实现多预设共享 livingmemory 记忆;运行时接管服务方法、不改 livingmemory 任何文件 | [指南](docs/记忆池别名器-安装与使用指南.md) · [README](packages/koishi-plugin-chatluna-scene-rules/README.md) |
 | `koishi-plugin-chatluna-character-buffer-backup` | 对话缓冲持久化 | 把 chatluna-character 只存在内存的近期对话缓冲持久化到数据库,重启 / 保存配置后自动灌回,避免 bot「忘记刚才聊的」 | [README](packages/koishi-plugin-chatluna-character-buffer-backup/README.md) |
+| **`koishi-plugin-chatluna-relay`** | 主动私信工具 `find_friend_chat` | 给角色 bot 一个受护栏保护的工具:授权用户可在对话中让 bot 就某话题**主动私信**白名单好友(bot 用自己口吻发开场白,之后由 chatluna 私聊默认行为接续)。护栏:触发 / 收件人 / 仅好友 / 限流 / 防回环 | [README](packages/koishi-plugin-chatluna-relay/README.md) |
 
 > ℹ️ `koishi-plugin-chatluna-scene-rules` 的包名 / 配置键**沿用旧名**(早期是「场合判定」插件),
 > 现在的功能是「livingmemory 记忆池别名器」,与 `{scene_rules()}` 无关。详见其指南。
@@ -26,6 +27,7 @@
 - 表情类插件额外需要 **emojiluna**(表情仓库 + 收集);`emoji-recall` 还需要一个 chatluna 能调用的 **embeddings 向量模型**(如本地 Ollama + `bge-m3`)
 - 记忆别名器额外需要 **chatluna-livingmemory**(提供 `chatluna_living_memory` 服务)
 - 缓冲备份器只需 **chatluna-character** 本身 + 一个 koishi `database` 实现(如 sqlite)
+- 主动私信工具(relay)只需 **chatluna** 本身;`chatluna-character` 可选(用于把主动联系补登记进对话记忆),收发需适配器支持 `sendPrivateMessage` / `getFriendList`(OneBot 满足)
 
 各插件的精确依赖见对应文档。
 
@@ -50,7 +52,8 @@ packages/
 ├── koishi-plugin-emoji-recall/                    # 表情语义召回 {emojis_smart}
 ├── koishi-plugin-emoji-intents/                   # 表情意图词表 {emoji_intents}（姊妹方案）
 ├── koishi-plugin-chatluna-scene-rules/            # livingmemory 记忆池别名器
-└── koishi-plugin-chatluna-character-buffer-backup/ # 对话缓冲持久化 / 重启恢复
+├── koishi-plugin-chatluna-character-buffer-backup/ # 对话缓冲持久化 / 重启恢复
+└── koishi-plugin-chatluna-relay/                   # 主动私信好友工具 find_friend_chat
 docs/
 ├── emoji-recall-安装与使用指南.md
 └── 记忆池别名器-安装与使用指南.md

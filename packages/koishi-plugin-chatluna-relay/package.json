@@ -1,0 +1,53 @@
+{
+  "name": "koishi-plugin-chatluna-relay",
+  "version": "0.1.0",
+  "description": "Give a ChatLuna character bot one guarded tool to proactively DM a whitelisted friend on a topic (trigger / recipient / friend-only / rate-limit / anti-loop guards).",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "妖祀",
+  "homepage": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/tree/main/packages/koishi-plugin-chatluna-relay#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ningningningning0420-ui/koishi-chatluna-plugins.git",
+    "directory": "packages/koishi-plugin-chatluna-relay"
+  },
+  "bugs": {
+    "url": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/issues"
+  },
+  "files": [
+    "index.js",
+    "guards.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "chatluna-character",
+    "relay",
+    "outreach",
+    "proactive-dm",
+    "chatbot"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.17.0",
+    "koishi-plugin-chatluna": "*",
+    "@langchain/core": "*",
+    "zod": "*"
+  },
+  "koishi": {
+    "description": {
+      "zh": "给 ChatLuna 角色 bot 注册一个受护栏保护的工具：触发白名单里的人可在对话中让 bot 就某话题主动私信白名单好友（bot 发自己组织的开场白，之后由 chatluna 私聊默认行为自然接续）。护栏：触发权白名单 / 收件人白名单 / 仅好友 / 限流 / 可选防回环。所有面向模型的话术均可在控制台改写，适配任意角色。",
+      "en": "Registers one guard-protected ChatLuna tool: a whitelisted user can, in conversation, have the character bot proactively DM a whitelisted friend about a topic. The bot sends its own opener; the ensuing chat is chatluna's normal private-chat behaviour. Guards: trigger whitelist / recipient whitelist / friend-only / rate-limit / optional anti-loop. All model-facing wording is editable in the console for any character."
+    },
+    "service": {
+      "required": [
+        "chatluna"
+      ],
+      "optional": [
+        "chatluna_character"
+      ]
+    }
+  }
+}
