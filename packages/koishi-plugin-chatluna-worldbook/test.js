@@ -274,6 +274,13 @@ test('isToudanSkip: 使用说明 / 妖祀 跳过', () => {
   assert.equal(lib.isToudanSkip({ comment: '髭切' }), false)
 })
 
+test('isToudanSkip/toudanCategory: 缺 comment 安全不抛', () => {
+  assert.equal(lib.isToudanSkip({}), false)
+  assert.equal(lib.isToudanSkip(null), false)
+  assert.equal(lib.toudanCategory({}), '刀男人设')
+  assert.equal(lib.toudanCategory(null), '刀男人设')
+})
+
 test('convertStWorldbook: skip+categorize 联动(刀帐规则)', () => {
   const stJson = { entries: {
     0: { comment: '髭切', key: ['髭切'], content: '刀档案', constant: false, order: 79 },
@@ -285,4 +292,10 @@ test('convertStWorldbook: skip+categorize 联动(刀帐规则)', () => {
   assert.deepEqual(out.map((e) => e.comment), ['髭切', '花野老师的审'])
   assert.equal(out.find((e) => e.comment === '髭切').category, '刀男人设')
   assert.equal(out.find((e) => e.comment === '花野老师的审').category, '审神者')
+})
+
+test('convertStEntry: categorize 返回空串则不写 category', () => {
+  const st = { comment: 'x', key: ['x'], content: 'c', constant: false, order: 79 }
+  const k = lib.convertStEntry(st, {}, { categorize: () => '' })
+  assert.equal(k.category, undefined)
 })
