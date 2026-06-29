@@ -126,6 +126,37 @@ test('selectEntries: 超预算时丢低优先(order 小的先丢), 高 order 与
   assert.deepEqual(r.dropped.map((e) => e.comment), ['低order'])
 })
 
+test('selectEntries: 分类上限——刀男人设>限额时按新近度保留前N', () => {
+  const mk = (name, kw) => ({ comment: name, category: '刀男人设', enabled: true, constant: false, keys: [kw], content: name + '的档案', order: 79 })
+  const entries = [mk('髭切', '髭切'), mk('膝丸', '膝丸'), mk('鹤丸', '鹤丸')]
+  // buffer 里顺序:髭切 → 鹤丸 → 膝丸(膝丸最新近)
+  const buffer = '先说髭切,再说鹤丸,最后说膝丸'
+  const r = lib.selectEntries(entries, buffer, { budgetTokens: 99999, categoryLimits: { '刀男人设': 2 } })
+  const names = r.selected.map((e) => e.comment)
+  assert.equal(names.length, 2)
+  assert.ok(names.includes('膝丸') && names.includes('鹤丸'), '应保留最新近的膝丸+鹤丸')
+  assert.ok(!names.includes('髭切'), '最早提到的髭切被挤掉')
+  assert.deepEqual(r.capDropped.map((e) => e.comment), ['髭切'])
+})
+
+test('selectEntries: 不受限的类别不裁剪', () => {
+  const mk = (name, cat) => ({ comment: name, category: cat, enabled: true, constant: false, keys: [name], content: name, order: 79 })
+  const entries = [mk('花野', '审神者'), mk('小江', '审神者'), mk('髭切', '刀男人设')]
+  const r = lib.selectEntries(entries, '花野 小江 髭切', { budgetTokens: 99999, categoryLimits: { '刀男人设': 10 } })
+  assert.equal(r.selected.length, 3, '审神者类无上限,全保留')
+  assert.equal(r.capDropped.length, 0)
+})
+
+test('selectEntries: 无 categoryLimits 时行为同现状(回归)', () => {
+  const entries = [
+    { comment: 'A', category: '刀男人设', enabled: true, constant: false, keys: ['x'], content: 'a', order: 79 },
+    { comment: 'B', category: '刀男人设', enabled: true, constant: false, keys: ['x'], content: 'b', order: 79 }
+  ]
+  const r = lib.selectEntries(entries, 'x', { budgetTokens: 99999 })
+  assert.equal(r.selected.length, 2)
+  assert.deepEqual(r.capDropped, [])
+})
+
 test('renderEntries: 用分隔拼接 content', () => {
   const s = lib.renderEntries([{ content: 'A' }, { content: 'B' }])
   assert.match(s, /A/)

@@ -115,8 +115,27 @@ function estimateTokens(s) {
 function _orderOf(e) { return e.order == null ? 100 : e.order }
 function selectEntries(entries, buffer, opts = {}) {
   const budget = opts.budgetTokens == null ? Infinity : opts.budgetTokens
-  const activated = (entries || []).filter((e) => entryActivates(e, buffer, opts))
-  // 保留优先级:蓝灯优先,其次 order 大者优先(高 order=更重要,预算紧时保住)
+  const categoryLimits = opts.categoryLimits || {}
+  let activated = (entries || []).filter((e) => entryActivates(e, buffer, opts))
+  const capDropped = []
+
+  // —— 分类条数上限:超额按新近度降序(平局 order 降序)保留前 N ——
+  for (const cat of Object.keys(categoryLimits)) {
+    const lim = Number(categoryLimits[cat])
+    if (!(lim >= 0)) continue
+    const inCat = activated.filter((e) => e.category === cat)
+    if (inCat.length <= lim) continue
+    const ranked = inCat.slice().sort((a, b) => {
+      const ra = recencyScore(a, buffer, opts), rb = recencyScore(b, buffer, opts)
+      if (rb !== ra) return rb - ra
+      return _orderOf(b) - _orderOf(a)
+    })
+    const keep = new Set(ranked.slice(0, lim))
+    activated = activated.filter((e) => e.category !== cat || keep.has(e))
+    capDropped.push(...ranked.slice(lim))
+  }
+
+  // —— 预算裁剪(保留优先级:蓝灯优先,其次 order 大者优先) ——
   const byPriority = activated.slice().sort((a, b) => {
     if (!!b.constant !== !!a.constant) return (b.constant ? 1 : 0) - (a.constant ? 1 : 0)
     return _orderOf(b) - _orderOf(a)
@@ -133,7 +152,7 @@ function selectEntries(entries, buffer, opts = {}) {
     if (!!b.constant !== !!a.constant) return (b.constant ? 1 : 0) - (a.constant ? 1 : 0)
     return _orderOf(a) - _orderOf(b)
   })
-  return { selected, dropped, usedTokens: used }
+  return { selected, dropped, usedTokens: used, capDropped }
 }
 
 function renderEntries(entries) {
