@@ -76,11 +76,12 @@ function lastMatchIndex(buffer, key, opts = {}) {
   const cs = !!opts.caseSensitive
   const b = cs ? buffer : buffer.toLowerCase()
   const k = cs ? key : key.toLowerCase()
+  // 默认整词匹配(wholeWord=true),与 matchKey/entryActivates 的命中判定保持一致——否则会"命中了却算不出位置"
   const whole = opts.wholeWord !== false
   if (hasCJK(k) || !whole) return b.lastIndexOf(k)
   const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   let re
-  try { re = new RegExp(`\\b${esc}\\b`, 'g') } catch (e) { return b.lastIndexOf(k) }
+  try { re = new RegExp(`\\b${esc}\\b`, 'g') } catch (e) { return b.lastIndexOf(k) } // 正则编译失败时降级到子串匹配 // 正则编译失败时降级到子串匹配
   let last = -1, m
   while ((m = re.exec(b)) !== null) { last = m.index; if (m.index === re.lastIndex) re.lastIndex++ }
   return last

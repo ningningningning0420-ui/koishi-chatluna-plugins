@@ -62,6 +62,11 @@ test('lastMatchIndex: 英文整词 + 正则', () => {
   assert.equal(lib.lastMatchIndex('a 12年b 99年', '/\\d+年/'), 7)
 })
 
+test('lastMatchIndex: 拉丁词默认整词(kingdom 不命中 king), wholeWord:false 才子串', () => {
+  assert.equal(lib.lastMatchIndex('kingdoms fall', 'king'), -1)
+  assert.equal(lib.lastMatchIndex('kingdoms fall', 'king', { wholeWord: false }), 0)
+})
+
 test('recencyScore: constant 恒为 Infinity', () => {
   assert.equal(lib.recencyScore({ constant: true, keys: [] }, '随便'), Infinity)
 })
