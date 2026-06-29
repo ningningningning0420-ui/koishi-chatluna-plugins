@@ -1,0 +1,19 @@
+{
+  "name": "koishi-plugin-chatluna-worldbook",
+  "description": "酒馆式世界书(lorebook):按关键词扫描最近消息,按需注入设定条目到 chatluna-character 预设",
+  "version": "0.0.1",
+  "main": "index.js",
+  "license": "MIT",
+  "files": ["index.js", "lib.js", "scripts", "data", "README.md"],
+  "scripts": {
+    "test": "node --test"
+  },
+  "koishi": {
+    "description": { "zh": "酒馆式世界书:关键词触发、按需注入设定条目(lazy injection),给 chatluna-character 预设瘦身/增容" },
+    "service": { "required": ["chatluna"], "optional": ["chatluna_character"] }
+  },
+  "peerDependencies": {
+    "koishi": "^4.18.0",
+    "koishi-plugin-chatluna": "^1.4.0-alpha.23"
+  }
+}
