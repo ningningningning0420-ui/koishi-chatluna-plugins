@@ -248,3 +248,41 @@ test('集成: 渲染产物含命中条目正文, 蓝灯排在最前', () => {
   const text = lib.renderEntries(selected)
   assert.match(text, /手入/)
 })
+
+// ───────────────────────── 分类 / 刀帐规则 ─────────────────────────
+test('convertStEntry: opts.categorize 命中则写 category', () => {
+  const st = { comment: '髭切', key: ['髭切'], content: '档案', constant: false, order: 79 }
+  const k = lib.convertStEntry(st, {}, { categorize: () => '刀男人设' })
+  assert.equal(k.category, '刀男人设')
+})
+
+test('convertStEntry: 不传 categorize 时无 category(向后兼容)', () => {
+  const st = { comment: '髭切', key: ['髭切'], content: '档案', constant: false, order: 79 }
+  const k = lib.convertStEntry(st, {})
+  assert.equal(k.category, undefined)
+})
+
+test('toudanCategory: 老师的审→审神者, 其余→刀男人设', () => {
+  assert.equal(lib.toudanCategory({ comment: '花野老师的审' }), '审神者')
+  assert.equal(lib.toudanCategory({ comment: '髭切' }), '刀男人设')
+})
+
+test('isToudanSkip: 使用说明 / 妖祀 跳过', () => {
+  assert.equal(lib.isToudanSkip({ comment: '使用说明' }), true)
+  assert.equal(lib.isToudanSkip({ comment: '妖祀老师的审' }), true)
+  assert.equal(lib.isToudanSkip({ comment: '花野老师的审' }), false)
+  assert.equal(lib.isToudanSkip({ comment: '髭切' }), false)
+})
+
+test('convertStWorldbook: skip+categorize 联动(刀帐规则)', () => {
+  const stJson = { entries: {
+    0: { comment: '髭切', key: ['髭切'], content: '刀档案', constant: false, order: 79 },
+    1: { comment: '花野老师的审', key: ['花野'], content: '审神者画像', constant: false, order: 79 },
+    2: { comment: '妖祀老师的审', key: ['妖祀'], content: '本人画像', constant: false, order: 79 },
+    3: { comment: '使用说明', key: [], content: '怎么用', constant: false, order: 1 }
+  } }
+  const out = lib.convertStWorldbook(stJson, {}, { skip: lib.isToudanSkip, categorize: lib.toudanCategory })
+  assert.deepEqual(out.map((e) => e.comment), ['髭切', '花野老师的审'])
+  assert.equal(out.find((e) => e.comment === '髭切').category, '刀男人设')
+  assert.equal(out.find((e) => e.comment === '花野老师的审').category, '审神者')
+})

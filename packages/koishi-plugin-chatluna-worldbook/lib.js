@@ -191,8 +191,8 @@ function isJunkStEntry(e) {
   return false
 }
 
-function convertStEntry(st, ctx = {}) {
-  return {
+function convertStEntry(st, ctx = {}, opts = {}) {
+  const entry = {
     comment: st.comment || '',
     keys: (st.key || []).slice(),
     secondaryKeys: (st.keysecondary || []).slice(),
@@ -202,15 +202,33 @@ function convertStEntry(st, ctx = {}) {
     order: st.order == null ? 100 : st.order,
     enabled: st.disable !== true
   }
+  if (typeof opts.categorize === 'function') {
+    const cat = opts.categorize(st)
+    if (cat) entry.category = cat
+  }
+  return entry
 }
 
-function convertStWorldbook(stJson, ctx = {}) {
+function convertStWorldbook(stJson, ctx = {}, opts = {}) {
   const entries = (stJson && stJson.entries) || {}
-  return Object.values(entries).filter((e) => !isJunkStEntry(e)).map((e) => convertStEntry(e, ctx))
+  return Object.values(entries)
+    .filter((e) => !isJunkStEntry(e))
+    .filter((e) => (typeof opts.skip === 'function' ? !opts.skip(e) : true))
+    .map((e) => convertStEntry(e, ctx, opts))
+}
+
+// —— 刀帐图鉴专用规则 ——
+function isToudanSkip(st) {
+  const c = String((st && st.comment) || '')
+  return /使用说明/.test(c) || /妖祀/.test(c)
+}
+function toudanCategory(st) {
+  const c = String((st && st.comment) || '')
+  return /老师的审/.test(c) ? '审神者' : '刀男人设'
 }
 
 module.exports = {
   matchKey, entryActivates, estimateTokens, selectEntries, renderEntries,
   buildScanBuffer, stripMacros, isJunkStEntry, convertStEntry, convertStWorldbook,
-  lastMatchIndex, recencyScore
+  lastMatchIndex, recencyScore, isToudanSkip, toudanCategory
 }
