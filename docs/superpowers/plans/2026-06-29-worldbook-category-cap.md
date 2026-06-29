@@ -447,6 +447,10 @@ git commit -m "feat(worldbook): 转换支持 category/skip + 刀帐规则"
   if (opt.preset === 'toudan') {
     convOpts.skip = lib.isToudanSkip
     convOpts.categorize = lib.toudanCategory
+    // 审神者画像(「XX老师的审」)在源刀帐里是 disable 的,这里直接启用导入;妖祀由 skip 排除
+    for (const e of Object.values(stJson.entries || {})) {
+      if (/老师的审/.test(String(e.comment || ''))) e.disable = false
+    }
   }
   const entries = lib.convertStWorldbook(stJson, { user: opt.user, char: opt.char }, convOpts)
 ```
@@ -468,7 +472,7 @@ node scripts/convert-st-worldbook.js \
   "/Users/iris/Documents/机器人/koishi-app/data/chathub/character/worldbooks/刀帐图鉴.koishi.json" \
   --preset toudan --char 髭切
 ```
-Expected 输出含:`分类分布: 刀男人设=125 · 审神者=7`(妖祀已删、使用说明已删;数字以实跑为准,审神者应为 7)
+Expected 输出含:`分类分布: 刀男人设=125 · 审神者=8`(妖祀已删、使用说明已删;9 个「老师的审」源数据为 disable,经 Step 1 的 enable loop 启用,删妖祀后剩 8)
 
 - [ ] **Step 3: 校验产物**
 
@@ -652,6 +656,6 @@ done
 - §7 部署 bot2/3/4 → Task 7 ✓
 - 「渲染顺序 vs 取舍顺序分离」→ Task 2 实现保留原渲染排序、新近度仅用于裁剪 ✓
 
-**Placeholder scan:** 无 TBD/TODO;每个代码步骤含完整代码;命令含预期输出。审神者条目数写「以实跑为准(应为 7)」是有意保留的实测确认点,非占位。
+**Placeholder scan:** 无 TBD/TODO;每个代码步骤含完整代码;命令含预期输出。审神者条目数实跑确认为 8(9 个「老师的审」启用后删妖祀)。
 
 **Type consistency:** `recencyScore`/`lastMatchIndex`/`selectEntries(…categoryLimits)`/`capDropped`/`isToudanSkip`/`toudanCategory`/`convertStEntry(st,ctx,opts)`/`convertStWorldbook(stJson,ctx,opts)` 在定义(Task 1/2/3)与消费(Task 4/5)处签名一致 ✓
