@@ -56,6 +56,52 @@ function entryActivates(entry, buffer, opts = {}) {
   }
 }
 
+// ───────────────────────── 新近度(最后命中位置) ─────────────────────────
+// 返回 key 在 buffer 中最后一次命中的字符下标(未命中 = -1)。
+function lastMatchIndex(buffer, key, opts = {}) {
+  buffer = String(buffer == null ? '' : buffer)
+  key = String(key == null ? '' : key)
+  if (!key) return -1
+  if (isRegexKey(key)) {
+    let re
+    try { re = compileRegex(key) } catch (e) { return -1 }
+    const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
+    let last = -1, m
+    while ((m = g.exec(buffer)) !== null) {
+      last = m.index
+      if (m.index === g.lastIndex) g.lastIndex++ // 防零宽匹配死循环
+    }
+    return last
+  }
+  const cs = !!opts.caseSensitive
+  const b = cs ? buffer : buffer.toLowerCase()
+  const k = cs ? key : key.toLowerCase()
+  const whole = opts.wholeWord !== false
+  if (hasCJK(k) || !whole) return b.lastIndexOf(k)
+  const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let re
+  try { re = new RegExp(`\\b${esc}\\b`, 'g') } catch (e) { return b.lastIndexOf(k) }
+  let last = -1, m
+  while ((m = re.exec(b)) !== null) { last = m.index; if (m.index === re.lastIndex) re.lastIndex++ }
+  return last
+}
+
+// 条目新近度:constant 恒 Infinity;绿灯取所有 key 最后命中下标的最大值。
+function recencyScore(entry, buffer, opts = {}) {
+  if (!entry) return -1
+  if (entry.constant) return Infinity
+  const matchOpts = {
+    caseSensitive: entry.caseSensitive != null ? entry.caseSensitive : opts.caseSensitive,
+    wholeWord: entry.matchWholeWord != null ? entry.matchWholeWord : opts.wholeWord
+  }
+  let best = -1
+  for (const key of entry.keys || []) {
+    const idx = lastMatchIndex(buffer, key, matchOpts)
+    if (idx > best) best = idx
+  }
+  return best
+}
+
 // ───────────────────────── token 估算(粗) ─────────────────────────
 function estimateTokens(s) {
   s = String(s == null ? '' : s)
@@ -145,5 +191,6 @@ function convertStWorldbook(stJson, ctx = {}) {
 
 module.exports = {
   matchKey, entryActivates, estimateTokens, selectEntries, renderEntries,
-  buildScanBuffer, stripMacros, isJunkStEntry, convertStEntry, convertStWorldbook
+  buildScanBuffer, stripMacros, isJunkStEntry, convertStEntry, convertStWorldbook,
+  lastMatchIndex, recencyScore
 }

@@ -51,6 +51,34 @@ test('entryActivates: 二级 NOT_ANY 命中次级则不激活', () => {
   assert.equal(lib.entryActivates(e, '出阵只是演练', {}), false)
 })
 
+// ───────────────────────── 新近度 ─────────────────────────
+test('lastMatchIndex: 取 key 最后一次出现的下标', () => {
+  assert.equal(lib.lastMatchIndex('膝丸…后来又说膝丸', '膝丸'), 7)
+  assert.equal(lib.lastMatchIndex('没有这个词', '膝丸'), -1)
+})
+
+test('lastMatchIndex: 英文整词 + 正则', () => {
+  assert.equal(lib.lastMatchIndex('king ... king', 'king'), 9)
+  assert.equal(lib.lastMatchIndex('a 12年b 99年', '/\\d+年/'), 7)
+})
+
+test('recencyScore: constant 恒为 Infinity', () => {
+  assert.equal(lib.recencyScore({ constant: true, keys: [] }, '随便'), Infinity)
+})
+
+test('recencyScore: 绿灯取各 key 最后命中的最大下标', () => {
+  const buffer = '先提到髭切,然后聊膝丸'
+  const hige = lib.recencyScore({ constant: false, keys: ['髭切'] }, buffer)
+  const hiza = lib.recencyScore({ constant: false, keys: ['膝丸'] }, buffer)
+  assert.ok(hiza > hige, '膝丸在后,新近度应更高')
+})
+
+test('recencyScore: 多 key 取最靠后的那个', () => {
+  const buffer = 'a膝丸b弟弟丸c'
+  const s = lib.recencyScore({ constant: false, keys: ['膝丸', '弟弟丸'] }, buffer)
+  assert.equal(s, buffer.lastIndexOf('弟弟丸'))
+})
+
 // ───────────────────────── token 估算 ─────────────────────────
 test('estimateTokens: 中日文按字, 拉丁按 0.25', () => {
   assert.equal(lib.estimateTokens('锻刀'), 2)
