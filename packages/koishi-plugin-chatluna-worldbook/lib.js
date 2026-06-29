@@ -81,7 +81,7 @@ function lastMatchIndex(buffer, key, opts = {}) {
   if (hasCJK(k) || !whole) return b.lastIndexOf(k)
   const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   let re
-  try { re = new RegExp(`\\b${esc}\\b`, 'g') } catch (e) { return b.lastIndexOf(k) } // 正则编译失败时降级到子串匹配 // 正则编译失败时降级到子串匹配
+  try { re = new RegExp(`\\b${esc}\\b`, 'g') } catch (e) { return b.lastIndexOf(k) } // 正则编译失败时降级到子串匹配
   let last = -1, m
   while ((m = re.exec(b)) !== null) { last = m.index; if (m.index === re.lastIndex) re.lastIndex++ }
   return last
