@@ -29,10 +29,13 @@ function main() {
   if (opt.preset === 'toudan') {
     convOpts.skip = lib.isToudanSkip
     convOpts.categorize = lib.toudanCategory
-    // 审神者画像(「XX老师的审」)在源刀帐里是 disable 的,这里直接启用导入;妖祀由 skip 排除
+    // 审神者画像(「XX老师的审」)在源刀帐里是 disable 的;在这个本次解析的临时 stJson 上
+    // 原地预改 disable=false 直接启用导入(throwaway 对象,无外部副作用);妖祀由 skip 排除
     for (const e of Object.values(stJson.entries || {})) {
       if (/老师的审/.test(String(e.comment || ''))) e.disable = false
     }
+  } else if (opt.preset) {
+    console.warn(`⚠️ 未知 preset "${opt.preset}",按无 preset 处理(不跳过/不分类)`)
   }
   const entries = lib.convertStWorldbook(stJson, { user: opt.user, char: opt.char }, convOpts)
   const out = {

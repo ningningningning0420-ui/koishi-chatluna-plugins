@@ -88,6 +88,7 @@ function lastMatchIndex(buffer, key, opts = {}) {
 }
 
 // 条目新近度:constant 恒 Infinity;绿灯取所有 key 最后命中下标的最大值。
+// 只扫 primary keys(primary 必命中才会激活,故已激活的非蓝灯条目恒得 ≥0;secondary 不计入新近度)。
 function recencyScore(entry, buffer, opts = {}) {
   if (!entry) return -1
   if (entry.constant) return Infinity

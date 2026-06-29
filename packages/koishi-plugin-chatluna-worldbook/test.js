@@ -147,6 +147,22 @@ test('selectEntries: 不受限的类别不裁剪', () => {
   assert.equal(r.capDropped.length, 0)
 })
 
+test('selectEntries: limit=0 ⇒ 该类全部挤掉', () => {
+  const mk = (n) => ({ comment: n, category: '刀男人设', enabled: true, constant: false, keys: [n], content: n, order: 79 })
+  const r = lib.selectEntries([mk('髭切'), mk('膝丸')], '髭切 膝丸', { budgetTokens: 99999, categoryLimits: { '刀男人设': 0 } })
+  assert.equal(r.selected.length, 0)
+  assert.equal(r.capDropped.length, 2)
+})
+
+test('selectEntries: 新近度平局时按 order 降序取舍', () => {
+  // 两条都只命中同一个「刀」位置 → recency 相同 → order 高者保留
+  const a = { comment: 'A', category: '刀男人设', enabled: true, constant: false, keys: ['刀'], content: 'a', order: 50 }
+  const b = { comment: 'B', category: '刀男人设', enabled: true, constant: false, keys: ['刀'], content: 'b', order: 300 }
+  const r = lib.selectEntries([a, b], '一把刀', { budgetTokens: 99999, categoryLimits: { '刀男人设': 1 } })
+  assert.deepEqual(r.selected.map((e) => e.comment), ['B'])
+  assert.deepEqual(r.capDropped.map((e) => e.comment), ['A'])
+})
+
 test('selectEntries: 无 categoryLimits 时行为同现状(回归)', () => {
   const entries = [
     { comment: 'A', category: '刀男人设', enabled: true, constant: false, keys: ['x'], content: 'a', order: 79 },
