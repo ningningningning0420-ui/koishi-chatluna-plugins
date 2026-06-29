@@ -16,6 +16,8 @@ exports.Config = Schema.object({
     .description('扫描最近几条消息找关键词(含 bot 与用户消息)'),
   budgetTokens: Schema.number().default(4000).min(100)
     .description('命中条目注入的 token 上限(防爆;超出按低优先丢弃)。还原优先,设宽松'),
+  categoryLimits: Schema.dict(Schema.number()).default({ '刀男人设': 10 })
+    .description('按 category 限制每轮最多注入条数(超额按出现新近度保留)。键=category,值=上限;未列的类不限'),
   caseSensitive: Schema.boolean().default(false).description('英文关键词大小写敏感(全局默认,条目可覆盖)'),
   wholeWord: Schema.boolean().default(true).description('英文关键词整词匹配(中文恒子串;全局默认,条目可覆盖)'),
   debug: Schema.boolean().default(false).description('日志输出每轮命中/丢弃的条目')
@@ -84,16 +86,20 @@ exports.apply = (ctx, config) => {
       const session = configurable && configurable.session
       if (!session || !allEntries.length) return ''
       const buffer = lib.buildScanBuffer(recentMessages(session), config.scanDepth)
-      const { selected, dropped, usedTokens } = lib.selectEntries(allEntries, buffer, {
+      const { selected, dropped, usedTokens, capDropped } = lib.selectEntries(allEntries, buffer, {
         budgetTokens: config.budgetTokens,
         caseSensitive: config.caseSensitive,
-        wholeWord: config.wholeWord
+        wholeWord: config.wholeWord,
+        categoryLimits: config.categoryLimits
       })
       if (config.debug) {
-        logger.info('[%s] 命中 %d 条(约%d tokens): %s%s',
+        const capInfo = (capDropped && capDropped.length)
+          ? ` | 分类超额挤掉: ${capDropped.map((e) => e.comment).join(', ')}` : ''
+        logger.info('[%s] 命中 %d 条(约%d tokens): %s%s%s',
           sessionKeyOf(session), selected.length, usedTokens,
           selected.map((e) => e.comment).join(', ') || '(无)',
-          dropped.length ? ` | 预算丢弃: ${dropped.map((e) => e.comment).join(', ')}` : '')
+          dropped.length ? ` | 预算丢弃: ${dropped.map((e) => e.comment).join(', ')}` : '',
+          capInfo)
       }
       return lib.renderEntries(selected)
     }
