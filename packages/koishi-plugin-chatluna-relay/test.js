@@ -138,5 +138,53 @@ test('isTriggerAllowed: group when triggerGroups empty → false (private-only d
   assert.strictEqual(g.isTriggerAllowed({ userId: '10001', isDirect: false, groupId: '20001' }, { triggerWhitelist: WL, triggerGroups: [] }), false)
 })
 
+// ---- relay-tag ----
+const rt = require('./relay-tag')
+test('relay-tag: 纯文字', () => {
+  const { relays } = rt.parseRelayTags('前 [[relay:芙蕾|你今天很可爱哦]] 后')
+  assert.strictEqual(relays.length, 1)
+  assert.strictEqual(relays[0].recipientAlias, '芙蕾')
+  assert.strictEqual(relays[0].text, '你今天很可爱哦')
+  assert.strictEqual(relays[0].photo, null)
+})
+test('relay-tag: 文字含竖线不丢', () => {
+  const { relays } = rt.parseRelayTags('[[relay:小江|a|b|c]]')
+  assert.strictEqual(relays[0].text, 'a|b|c')
+})
+test('relay-tag: 图片 + nsfw', () => {
+  const { relays } = rt.parseRelayTags('[[relay:芙蕾|图=哭泣特写 眼角湿润|nsfw]]')
+  assert.strictEqual(relays[0].text, '')
+  assert.deepStrictEqual(relays[0].photo, { desc: '哭泣特写 眼角湿润', nsfw: true })
+})
+test('relay-tag: 文字 + 图', () => {
+  const { relays } = rt.parseRelayTags('[[relay:芙蕾|看这张|图=午后阳光]]')
+  assert.strictEqual(relays[0].text, '看这张')
+  assert.deepStrictEqual(relays[0].photo, { desc: '午后阳光', nsfw: false })
+})
+test('relay-tag: 图描述可空 = 最近一张', () => {
+  const { relays } = rt.parseRelayTags('[[relay:芙蕾|图=]]')
+  assert.deepStrictEqual(relays[0].photo, { desc: '', nsfw: false })
+})
+test('relay-tag: 多标记', () => {
+  const { relays } = rt.parseRelayTags('[[relay:芙蕾|嗨]][[relay:小江|哟]]')
+  assert.strictEqual(relays.length, 2)
+})
+test('relay-tag: 占位别名忽略', () => {
+  const { relays } = rt.parseRelayTags('[[relay:别名|示例]]')
+  assert.strictEqual(relays.length, 0)
+})
+test('relay-tag: 别名缺失忽略', () => {
+  const { relays } = rt.parseRelayTags('[[relay:|没人]]')
+  assert.strictEqual(relays.length, 0)
+})
+test('relay-tag: cleanedText 剥掉标记', () => {
+  const { cleanedText } = rt.parseRelayTags('哈 [[relay:芙蕾|x]] 哈')
+  assert.strictEqual(cleanedText.includes('[[relay:'), false)
+})
+test('relay-tag: hasRelayTag', () => {
+  assert.strictEqual(rt.hasRelayTag('a [[relay:x|y]]'), true)
+  assert.strictEqual(rt.hasRelayTag('无标记'), false)
+})
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed')
 process.exit(fail ? 1 : 0)

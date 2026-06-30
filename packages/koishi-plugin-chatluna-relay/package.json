@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-chatluna-relay",
   "version": "0.1.0",
-  "description": "Give a ChatLuna character bot one guarded tool to proactively DM a whitelisted friend on a topic (trigger / recipient / friend-only / rate-limit / anti-loop guards).",
+  "description": "Let a ChatLuna character bot proactively DM a whitelisted friend (optionally with an album photo) via a [[relay:...]] reply-marker it writes in its own output — guarded by trigger / recipient / friend-only / rate-limit / anti-loop checks.",
   "main": "index.js",
   "license": "MIT",
   "author": "妖祀",
@@ -17,6 +17,7 @@
   "files": [
     "index.js",
     "guards.js",
+    "relay-tag.js",
     "README.md",
     "LICENSE"
   ],
@@ -32,21 +33,20 @@
   ],
   "peerDependencies": {
     "koishi": "^4.17.0",
-    "koishi-plugin-chatluna": "*",
-    "@langchain/core": "*",
-    "zod": "*"
+    "koishi-plugin-chatluna": "*"
   },
   "koishi": {
     "description": {
-      "zh": "给 ChatLuna 角色 bot 注册一个受护栏保护的工具：触发白名单里的人可在对话中让 bot 就某话题主动私信白名单好友（bot 发自己组织的开场白，之后由 chatluna 私聊默认行为自然接续）。护栏：触发权白名单 / 收件人白名单 / 仅好友 / 限流 / 可选防回环。所有面向模型的话术均可在控制台改写，适配任意角色。",
-      "en": "Registers one guard-protected ChatLuna tool: a whitelisted user can, in conversation, have the character bot proactively DM a whitelisted friend about a topic. The bot sends its own opener; the ensuing chat is chatluna's normal private-chat behaviour. Guards: trigger whitelist / recipient whitelist / friend-only / rate-limit / optional anti-loop. All model-facing wording is editable in the console for any character."
+      "zh": "让 ChatLuna 角色 bot 通过它在自己输出里写的 [[relay:别名|话|图=描述]] 标记，主动私信白名单好友（可附带相册照片）。标记从可见回复里剥除、带外执行，不进原生工具调用（避免角色解析被打断）。护栏：触发权白名单 / 收件人白名单 / 仅好友 / 限流 / 可选防回环。配图转发需存在提供 recallEntry 的 photo 服务（可选）。所有面向模型的话术均可在控制台/预设改写，适配任意角色。",
+      "en": "Lets a ChatLuna character bot proactively DM a whitelisted friend (optionally with an album photo) via a [[relay:alias|text|图=desc]] marker it writes in its own output. The marker is stripped from the visible reply and executed out-of-band — no native tool call (so it never breaks the character parse). Guards: trigger whitelist / recipient whitelist / friend-only / rate-limit / optional anti-loop. Photo forwarding requires an optional 'photo' service exposing recallEntry. All model-facing wording is editable for any character."
     },
     "service": {
       "required": [
         "chatluna"
       ],
       "optional": [
-        "chatluna_character"
+        "chatluna_character",
+        "photo"
       ]
     }
   }
