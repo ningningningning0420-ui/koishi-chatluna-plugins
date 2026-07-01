@@ -1,0 +1,54 @@
+{
+  "name": "koishi-plugin-chatluna-life-sim",
+  "version": "0.1.0",
+  "description": "本丸日常模拟器：让刀剑男士 bot 在不聊天时自主「过日子」——观察→roll 行动→长短期记忆→规划→反思的后台循环，产出持续、一致、可被引用的不在场生活。",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "妖祀",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ningningningning0420-ui/koishi-chatluna-plugins.git",
+    "directory": "packages/koishi-plugin-chatluna-life-sim"
+  },
+  "bugs": {
+    "url": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/issues"
+  },
+  "files": [
+    "index.js",
+    "config.js",
+    "db.js",
+    "model.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "chatluna-character",
+    "life-sim",
+    "日常模拟",
+    "本丸",
+    "刀剑男士",
+    "generative-agents",
+    "memory"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.17.0",
+    "koishi-plugin-chatluna": "*"
+  },
+  "koishi": {
+    "description": {
+      "zh": "本丸日常模拟器：让刀剑男士 bot 在不聊天时自主「过日子」——观察→roll 行动→长短期记忆→规划→反思的后台循环，产出持续、一致、可被引用的不在场生活。",
+      "en": "Honmaru Life Simulator: lets a Touken Ranbu bot \"live its daily life\" in the background — observe → roll actions → short/long-term memory → planning → reflection cycle, producing continuous and consistent off-stage life that can be referenced in conversation."
+    },
+    "service": {
+      "required": [
+        "chatluna"
+      ],
+      "optional": [
+        "chatluna_character"
+      ]
+    }
+  }
+}
