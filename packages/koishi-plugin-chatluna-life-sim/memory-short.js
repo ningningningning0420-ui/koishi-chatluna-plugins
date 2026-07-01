@@ -108,6 +108,67 @@ function toDateStr(d) {
   return y + '-' + m + '-' + day
 }
 
+// Declared columns for life_sim_event (excluding id/presetId/ts/day set by glue):
+//   title, narrative, event_type, location, participants(text/JSON), mood,
+//   duration_min(integer), importance(float), threads(text/JSON),
+//   plan_adherence, type, consolidated, sourceModel
+
+/**
+ * Map a §5.1 roll event object to a life_sim_event DB row (declared columns only).
+ *
+ * Key normalizations:
+ *   - duration_min  = event.duration_min  ?? event.duration_minutes  (integer or null)
+ *   - threads       = JSON string of event.threads ?? event.threads_touched ?? []
+ *   - participants  = JSON string of event.participants ?? []
+ *
+ * Does NOT set ts/day/presetId/id — those are added by appendEvent.
+ * Does NOT call new Date() — fully deterministic, offline-testable.
+ *
+ * Stray keys (duration_minutes, threads_touched, candidates, next_state,
+ * want_to_share, chosen_index, etc.) are intentionally excluded.
+ *
+ * @param {object} event  A §5.1 roll event object
+ * @returns {object}      A row object with only declared life_sim_event columns
+ */
+function eventToRow(event) {
+  if (!event || typeof event !== 'object') event = {}
+
+  // duration_min: prefer DB-name key, fall back to roll-object key, coerce to int or null
+  let durationMin = null
+  if (event.duration_min != null) {
+    const n = Math.round(Number(event.duration_min))
+    durationMin = Number.isFinite(n) ? n : null
+  } else if (event.duration_minutes != null) {
+    const n = Math.round(Number(event.duration_minutes))
+    durationMin = Number.isFinite(n) ? n : null
+  }
+
+  // threads: prefer DB-name key, fall back to roll key, default []
+  const rawThreads = event.threads != null ? event.threads
+    : (event.threads_touched != null ? event.threads_touched : [])
+  const threads = JSON.stringify(Array.isArray(rawThreads) ? rawThreads : [])
+
+  // participants: default []
+  const rawParticipants = event.participants != null ? event.participants : []
+  const participants = JSON.stringify(Array.isArray(rawParticipants) ? rawParticipants : [])
+
+  return {
+    title:          event.title         != null ? event.title         : null,
+    narrative:      event.narrative     != null ? event.narrative     : null,
+    event_type:     event.event_type    != null ? event.event_type    : null,
+    location:       event.location      != null ? event.location      : null,
+    participants,
+    mood:           event.mood          != null ? event.mood          : null,
+    duration_min:   durationMin,
+    importance:     event.importance    != null ? event.importance    : null,
+    threads,
+    plan_adherence: event.plan_adherence != null ? event.plan_adherence : null,
+    type:           event.type          != null ? event.type          : null,
+    consolidated:   event.consolidated  === true,
+    sourceModel:    event.sourceModel   != null ? event.sourceModel   : null,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // DB glue: ShortTermMemory
 // ---------------------------------------------------------------------------
@@ -129,14 +190,7 @@ function createShortTermMemory(ctx, config) {
   async function appendEvent(presetId, event) {
     const ts = new Date()
     const day = toDateStr(ts)
-    const row = Object.assign({}, event, {
-      presetId,
-      ts,
-      day,
-      consolidated: event.consolidated === true,
-      participants: event.participants != null ? JSON.stringify(event.participants) : null,
-      threads: event.threads != null ? JSON.stringify(event.threads) : null,
-    })
+    const row = Object.assign(eventToRow(event), { presetId, ts, day })
     await ctx.database.create(TABLE, row)
   }
 
@@ -281,6 +335,7 @@ module.exports = {
   isOlderThan,
   defaultLifeState,
   mergeLifeState,
+  eventToRow,
   // DB glue factories
   createShortTermMemory,
   createLifeState,

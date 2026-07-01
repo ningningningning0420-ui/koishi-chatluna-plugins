@@ -1006,13 +1006,14 @@ test('continuityClamp: null nextState → ok=true, clamped={} (graceful)', () =>
   assert.strictEqual(r.ok, true)
 })
 
-// ---- memory-short.js: pickRecent / isOlderThan / defaultLifeState / mergeLifeState ----
+// ---- memory-short.js: pickRecent / isOlderThan / defaultLifeState / mergeLifeState / eventToRow ----
 
 const {
   pickRecent,
   isOlderThan,
   defaultLifeState,
   mergeLifeState,
+  eventToRow,
 } = require('./memory-short')
 
 // --- pickRecent ---
@@ -1263,6 +1264,197 @@ test('mergeLifeState: accepts updatedAt from patch (caller sets it)', () => {
   const ts = new Date(12345)
   const result = mergeLifeState(defaultLifeState('p1'), { updatedAt: ts })
   assert.strictEqual(result.updatedAt, ts)
+})
+
+// --- eventToRow ---
+
+test('eventToRow: duration_minutes → duration_min (integer)', () => {
+  const row = eventToRow({ duration_minutes: 45, title: 't' })
+  assert.strictEqual(row.duration_min, 45)
+})
+
+test('eventToRow: duration_min passed straight through as integer', () => {
+  const row = eventToRow({ duration_min: 30 })
+  assert.strictEqual(row.duration_min, 30)
+})
+
+test('eventToRow: duration_min preferred over duration_minutes when both present', () => {
+  const row = eventToRow({ duration_min: 10, duration_minutes: 99 })
+  assert.strictEqual(row.duration_min, 10)
+})
+
+test('eventToRow: duration absent → duration_min null', () => {
+  const row = eventToRow({ title: 't' })
+  assert.strictEqual(row.duration_min, null)
+})
+
+test('eventToRow: duration_minutes non-integer coerced to int via Math.round', () => {
+  const row = eventToRow({ duration_minutes: 45.7 })
+  assert.strictEqual(row.duration_min, 46)
+})
+
+test('eventToRow: threads_touched → threads JSON string', () => {
+  const row = eventToRow({ threads_touched: ['t1', 't2'] })
+  assert.strictEqual(row.threads, JSON.stringify(['t1', 't2']))
+})
+
+test('eventToRow: threads passed straight through as JSON string', () => {
+  const row = eventToRow({ threads: [{ id: 'x' }] })
+  assert.strictEqual(row.threads, JSON.stringify([{ id: 'x' }]))
+})
+
+test('eventToRow: threads preferred over threads_touched when both present', () => {
+  const row = eventToRow({ threads: ['a'], threads_touched: ['b'] })
+  assert.strictEqual(row.threads, JSON.stringify(['a']))
+})
+
+test('eventToRow: threads absent → threads is "[]"', () => {
+  const row = eventToRow({ title: 't' })
+  assert.strictEqual(row.threads, '[]')
+})
+
+test('eventToRow: participants → JSON string', () => {
+  const row = eventToRow({ participants: ['p1', 'p2'] })
+  assert.strictEqual(row.participants, JSON.stringify(['p1', 'p2']))
+})
+
+test('eventToRow: participants absent → "[]"', () => {
+  const row = eventToRow({ title: 't' })
+  assert.strictEqual(row.participants, '[]')
+})
+
+test('eventToRow: no stray key duration_minutes in output', () => {
+  const row = eventToRow({ duration_minutes: 20 })
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'duration_minutes'), 'duration_minutes must not be in row')
+})
+
+test('eventToRow: no stray key threads_touched in output', () => {
+  const row = eventToRow({ threads_touched: ['x'] })
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'threads_touched'), 'threads_touched must not be in row')
+})
+
+test('eventToRow: no stray key candidates in output', () => {
+  const row = eventToRow({ candidates: [1, 2, 3] })
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'candidates'), 'candidates must not be in row')
+})
+
+test('eventToRow: no stray key next_state in output', () => {
+  const row = eventToRow({ next_state: { location: 'x' } })
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'next_state'), 'next_state must not be in row')
+})
+
+test('eventToRow: no stray key want_to_share in output', () => {
+  const row = eventToRow({ want_to_share: 'now' })
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'want_to_share'), 'want_to_share must not be in row')
+})
+
+test('eventToRow: no stray key chosen_index in output', () => {
+  const row = eventToRow({ chosen_index: 0 })
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'chosen_index'), 'chosen_index must not be in row')
+})
+
+test('eventToRow: copies title through', () => {
+  const row = eventToRow({ title: '练习' })
+  assert.strictEqual(row.title, '練習' === '练习' ? '练习' : '练习')
+  assert.strictEqual(row.title, '练习')
+})
+
+test('eventToRow: copies narrative through', () => {
+  const row = eventToRow({ narrative: '描述文本' })
+  assert.strictEqual(row.narrative, '描述文本')
+})
+
+test('eventToRow: copies event_type through', () => {
+  const row = eventToRow({ event_type: '练习' })
+  assert.strictEqual(row.event_type, '练习')
+})
+
+test('eventToRow: copies location through', () => {
+  const row = eventToRow({ location: '练习场' })
+  assert.strictEqual(row.location, '练习场')
+})
+
+test('eventToRow: copies mood through', () => {
+  const row = eventToRow({ mood: '专注' })
+  assert.strictEqual(row.mood, '专注')
+})
+
+test('eventToRow: copies importance through', () => {
+  const row = eventToRow({ importance: 0.8 })
+  assert.strictEqual(row.importance, 0.8)
+})
+
+test('eventToRow: copies plan_adherence through', () => {
+  const row = eventToRow({ plan_adherence: 'followed' })
+  assert.strictEqual(row.plan_adherence, 'followed')
+})
+
+test('eventToRow: copies type through', () => {
+  const row = eventToRow({ type: 'context' })
+  assert.strictEqual(row.type, 'context')
+})
+
+test('eventToRow: copies sourceModel through', () => {
+  const row = eventToRow({ sourceModel: 'openai/gpt-4o' })
+  assert.strictEqual(row.sourceModel, 'openai/gpt-4o')
+})
+
+test('eventToRow: consolidated true → true', () => {
+  const row = eventToRow({ consolidated: true })
+  assert.strictEqual(row.consolidated, true)
+})
+
+test('eventToRow: consolidated absent → false (default)', () => {
+  const row = eventToRow({})
+  assert.strictEqual(row.consolidated, false)
+})
+
+test('eventToRow: no new Date() call (deterministic; no ts/day/presetId/id in output)', () => {
+  const row = eventToRow({ title: 't', ts: new Date(), day: '2026-01-01', presetId: 'x', id: 42 })
+  // ts/day/presetId/id must NOT be in eventToRow output
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'ts'), 'ts must not be in row')
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'day'), 'day must not be in row')
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'presetId'), 'presetId must not be in row')
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'id'), 'id must not be in row')
+})
+
+test('eventToRow: full §5.1 roll event object maps correctly (kitchen sink)', () => {
+  const event = {
+    title: '晨练',
+    narrative: '髭切在练习场挥刀。',
+    event_type: '练习',
+    location: '练习场',
+    participants: ['膝丸'],
+    mood: '专注',
+    duration_minutes: 30,   // roll key — should become duration_min:30
+    importance: 0.6,
+    threads_touched: ['修行', '手足'],  // roll key — should become threads JSON
+    plan_adherence: 'followed',
+    type: 'context',
+    sourceModel: 'fake/model',
+    // stray keys that must not leak
+    candidates: [0, 1, 2],
+    next_state: { location: '练习场' },
+    want_to_share: 'later',
+    chosen_index: 1,
+  }
+  const row = eventToRow(event)
+  assert.strictEqual(row.title, '晨练')
+  assert.strictEqual(row.duration_min, 30)
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'duration_minutes'))
+  assert.strictEqual(row.threads, JSON.stringify(['修行', '手足']))
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'threads_touched'))
+  assert.strictEqual(row.participants, JSON.stringify(['膝丸']))
+  assert.strictEqual(row.mood, '专注')
+  assert.strictEqual(row.importance, 0.6)
+  assert.strictEqual(row.plan_adherence, 'followed')
+  assert.strictEqual(row.type, 'context')
+  assert.strictEqual(row.sourceModel, 'fake/model')
+  assert.strictEqual(row.consolidated, false)
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'candidates'))
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'next_state'))
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'want_to_share'))
+  assert.ok(!Object.prototype.hasOwnProperty.call(row, 'chosen_index'))
 })
 
 // ---- schedule-routine.js: blocksFor / buildRoutinePrompt / parseRoutineResponse ----
