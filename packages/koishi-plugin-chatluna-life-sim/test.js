@@ -2489,6 +2489,1064 @@ async function main() {
       `Expected ${expected} but got ${TEST_DAY_START_MS}`)
   })
 
+  // ===========================================================================
+  // Task 9: roll-prompt.js — buildRollPrompt
+  // ===========================================================================
+  {
+    const { buildRollPrompt, _fmtLifeState, _fmtWorld, _fmtBlock, _fmtAvailableTypes, _fmtRecent, _fmtSilence, SCHEMA_DESCRIPTION } = require('./roll-prompt')
+
+    // ── Section formatters ──────────────────────────────────────────────────
+
+    test('roll-prompt: _fmtLifeState includes location and mood', () => {
+      const out = _fmtLifeState({ location: '檐下', current_activity: '发呆', mood: '慵懒', open_threads: [] })
+      assert.ok(out.includes('檐下'), 'should include location')
+      assert.ok(out.includes('慵懒'), 'should include mood')
+      assert.ok(out.includes('发呆'), 'should include current_activity')
+    })
+
+    test('roll-prompt: _fmtLifeState handles missing lifeState gracefully', () => {
+      const out = _fmtLifeState(null)
+      assert.ok(typeof out === 'string', 'returns string')
+      assert.ok(out.includes('当前状态'), 'has section header')
+    })
+
+    test('roll-prompt: _fmtLifeState formats open_threads array', () => {
+      const out = _fmtLifeState({
+        location: '庭院',
+        mood: 'neutral',
+        open_threads: [
+          { id: 'thread-1', desc: '和膝丸约好了练习', due: '明日' },
+        ],
+      })
+      assert.ok(out.includes('膝丸'), 'should include thread desc')
+      assert.ok(out.includes('明日'), 'should include due')
+    })
+
+    test('roll-prompt: _fmtWorld includes timeOfDay and weather', () => {
+      const out = _fmtWorld({ timeOfDay: '午后', season: '夏', weather: '晴', locations: ['本丸·主屋', '庭院'] })
+      assert.ok(out.includes('午后'), 'should include timeOfDay')
+      assert.ok(out.includes('晴'), 'should include weather')
+      assert.ok(out.includes('夏'), 'should include season')
+    })
+
+    test('roll-prompt: _fmtBlock with valid block', () => {
+      const out = _fmtBlock({ activity: '对练', location: '练习场', source: 'routine' })
+      assert.ok(out.includes('对练'), 'should include activity')
+      assert.ok(out.includes('练习场'), 'should include location')
+    })
+
+    test('roll-prompt: _fmtBlock with null block → free time', () => {
+      const out = _fmtBlock(null)
+      assert.ok(out.includes('自由时段'), 'should indicate free time')
+    })
+
+    test('roll-prompt: _fmtAvailableTypes lists types', () => {
+      const out = _fmtAvailableTypes([{ type: '练习', weight: 3 }, { type: '思绪', weight: 1 }])
+      assert.ok(out.includes('练习'), 'should include type 练习')
+      assert.ok(out.includes('思绪'), 'should include type 思绪')
+    })
+
+    test('roll-prompt: _fmtAvailableTypes handles empty', () => {
+      const out = _fmtAvailableTypes([])
+      assert.ok(typeof out === 'string', 'returns string')
+    })
+
+    test('roll-prompt: _fmtRecent formats recent events', () => {
+      const events = [
+        { title: '练刀', narrative: '在练习场挥了一会儿刀', mood: '专注', ts: 1000 },
+        { title: '泡茶', narrative: '煮了壶茶慢慢喝', mood: '悠闲', ts: 500 },
+      ]
+      const out = _fmtRecent(events)
+      assert.ok(out.includes('练刀'), 'should include event title')
+      assert.ok(out.includes('泡茶'), 'should include second event')
+    })
+
+    test('roll-prompt: _fmtRecent handles empty', () => {
+      const out = _fmtRecent([])
+      assert.ok(out.includes('暂无'), 'should note empty')
+    })
+
+    test('roll-prompt: _fmtSilence with no silence data', () => {
+      const out = _fmtSilence({})
+      assert.ok(out.includes('沉默状态'), 'has section header')
+    })
+
+    test('roll-prompt: _fmtSilence with unansweredCount', () => {
+      const out = _fmtSilence({ unansweredCount: 2, lastMessageAgoMin: 90 })
+      assert.ok(out.includes('2'), 'should include count')
+      assert.ok(out.includes('90'), 'should include minutes')
+    })
+
+    // ── buildRollPrompt structure ────────────────────────────────────────────
+
+    test('roll-prompt: returns array of 2 messages', () => {
+      const msgs = buildRollPrompt({
+        persona: '髭切膝丸（骨喰藤四郎の兄）',
+        lifeState: { location: '檐下', current_activity: '发呆', mood: '慵懒', open_threads: [] },
+        world: { timeOfDay: '午后', season: '夏', weather: '晴', locations: ['本丸·主屋', '庭院'] },
+        block: { activity: '发呆', location: '檐下', source: 'routine' },
+        availableTypes: [{ type: '檐下发呆', weight: 2 }, { type: '思绪', weight: 1 }],
+        recentEvents: [{ title: '练刀', narrative: '挥了一会儿刀', mood: '专注', ts: 1000 }],
+        silenceState: { unansweredCount: 0 },
+      })
+      assert.strictEqual(msgs.length, 2, 'should have 2 messages')
+      assert.strictEqual(msgs[0].role, 'system', 'first is system message (static)')
+      assert.strictEqual(msgs[1].role, 'user', 'second is user message (dynamic)')
+    })
+
+    test('roll-prompt: static persona is in system message (first)', () => {
+      const msgs = buildRollPrompt({
+        persona: '这是角色人设的关键文字',
+        lifeState: { location: '庭院', mood: 'neutral', open_threads: [] },
+        world: { timeOfDay: '上午', season: '春', weather: '晴', locations: ['本丸·主屋'] },
+        block: null,
+        availableTypes: [{ type: '练习', weight: 3 }],
+        recentEvents: [],
+        silenceState: {},
+      })
+      assert.ok(msgs[0].content.includes('这是角色人设的关键文字'), 'persona in system msg')
+      // Ensure persona is NOT also prepended to user msg (it's only in system)
+      assert.ok(!msgs[1].content.includes('这是角色人设的关键文字'), 'persona not duplicated in user msg')
+    })
+
+    test('roll-prompt: system message comes before life-state/world content', () => {
+      const msgs = buildRollPrompt({
+        persona: 'PERSONA_MARKER',
+        lifeState: { location: '本丸·主屋', mood: '平静', open_threads: [] },
+        world: { timeOfDay: '清晨', season: '秋', weather: '阴', locations: ['本丸·主屋'] },
+        block: null,
+        availableTypes: [{ type: '思绪', weight: 1 }],
+        recentEvents: [],
+        silenceState: {},
+      })
+      // System message (index 0) has persona; user message (index 1) has dynamic context
+      // The system is first → static-first ordering confirmed
+      assert.ok(msgs[0].content.includes('PERSONA_MARKER'), 'persona in position 0 (system)')
+      assert.ok(msgs[1].content.includes('当前状态'), 'life-state in position 1 (user)')
+      assert.ok(msgs[1].content.includes('WorldContext'), 'world in user msg')
+    })
+
+    test('roll-prompt: user message contains all dynamic sections', () => {
+      const msgs = buildRollPrompt({
+        persona: 'P',
+        lifeState: { location: '庭院', current_activity: '浇水', mood: '愉快', open_threads: [] },
+        world: { timeOfDay: '上午', season: '春', weather: '晴', locations: ['庭院'] },
+        block: { activity: '浇水', location: '庭院', source: 'routine' },
+        availableTypes: [{ type: '练习', weight: 3 }, { type: '思绪', weight: 1 }],
+        recentEvents: [{ title: '打扫', narrative: '扫了院子', mood: '清爽', ts: 1000 }],
+        silenceState: { unansweredCount: 1, lastMessageAgoMin: 60 },
+      })
+      const u = msgs[1].content
+      assert.ok(u.includes('上午'), 'world timeOfDay present')
+      assert.ok(u.includes('浇水'), 'block activity present')
+      assert.ok(u.includes('练习'), 'available type present')
+      assert.ok(u.includes('打扫'), 'recent event present')
+      assert.ok(u.includes('60'), 'silence state present')
+    })
+
+    test('roll-prompt: instructs model to list candidates (list-then-roll)', () => {
+      const msgs = buildRollPrompt({
+        persona: 'P',
+        lifeState: { location: '本丸·主屋', mood: 'neutral', open_threads: [] },
+        world: { timeOfDay: '夜', season: '冬', weather: '阴', locations: ['本丸·主屋'] },
+        block: null,
+        availableTypes: [{ type: '夜巡', weight: 2 }],
+        recentEvents: [],
+        silenceState: {},
+      })
+      const combined = msgs.map((m) => m.content).join('\n')
+      assert.ok(combined.includes('candidates'), 'prompts for candidates array')
+      assert.ok(combined.includes('chosen_index'), 'prompts for chosen_index')
+      assert.ok(combined.includes('候选'), 'instructs to list candidates in Chinese')
+    })
+
+    test('roll-prompt: asks for §5.1 JSON output schema', () => {
+      const msgs = buildRollPrompt({
+        persona: 'P',
+        lifeState: { location: '本丸·主屋', mood: 'neutral', open_threads: [] },
+        world: { timeOfDay: '清晨', season: '春', weather: '晴', locations: ['本丸·主屋'] },
+        block: null,
+        availableTypes: [{ type: '练习', weight: 2 }],
+        recentEvents: [],
+        silenceState: {},
+      })
+      const combined = msgs.map((m) => m.content).join('\n')
+      assert.ok(combined.includes('want_to_share'), 'schema includes want_to_share')
+      assert.ok(combined.includes('next_state'), 'schema includes next_state')
+      assert.ok(combined.includes('next_delay_minutes'), 'schema includes next_delay_minutes')
+      assert.ok(combined.includes('plan_adherence'), 'schema includes plan_adherence')
+    })
+
+    test('roll-prompt: handles missing persona gracefully', () => {
+      const msgs = buildRollPrompt({
+        persona: null,
+        lifeState: null,
+        world: null,
+        block: null,
+        availableTypes: [],
+        recentEvents: [],
+        silenceState: null,
+      })
+      assert.strictEqual(msgs.length, 2, '2 messages even with null inputs')
+      assert.ok(msgs[0].content.includes('未加载'), 'default persona message in system')
+    })
+
+    test('roll-prompt: no new Date() — pure function returns same output for same inputs', () => {
+      const inputs = {
+        persona: 'static persona text',
+        lifeState: { location: '庭院', mood: '慵懒', open_threads: [] },
+        world: { timeOfDay: '午后', season: '秋', weather: '多云', locations: ['庭院', '本丸·主屋'] },
+        block: { activity: '散步', location: '庭院', source: 'routine' },
+        availableTypes: [{ type: '檐下发呆', weight: 2 }],
+        recentEvents: [{ title: '读书', narrative: '翻了几页书', mood: '平静', ts: 9999 }],
+        silenceState: { unansweredCount: 0 },
+      }
+      const a = buildRollPrompt(inputs)
+      const b = buildRollPrompt(inputs)
+      assert.strictEqual(JSON.stringify(a), JSON.stringify(b), 'pure: same output for same inputs')
+    })
+  }
+
+  // ===========================================================================
+  // Task 9: roll-roller.js — parseRollResponse + sampleCandidate + _extractJson
+  // ===========================================================================
+  {
+    const { parseRollResponse, sampleCandidate, _extractJson } = require('./roll-roller')
+
+    // ── _extractJson ─────────────────────────────────────────────────────────
+
+    test('_extractJson: extracts clean JSON', () => {
+      const result = _extractJson('{"foo": "bar", "n": 42}')
+      assert.strictEqual(result.foo, 'bar')
+      assert.strictEqual(result.n, 42)
+    })
+
+    test('_extractJson: extracts JSON from prose wrapping', () => {
+      const text = 'Here is my response:\n{"key": "value", "arr": [1, 2]}\nThat is all.'
+      const result = _extractJson(text)
+      assert.strictEqual(result.key, 'value')
+    })
+
+    test('_extractJson: strips markdown code fences', () => {
+      const text = '```json\n{"x": 99}\n```'
+      const result = _extractJson(text)
+      assert.strictEqual(result.x, 99)
+    })
+
+    test('_extractJson: returns null for garbage', () => {
+      const result = _extractJson('not json at all')
+      assert.strictEqual(result, null)
+    })
+
+    test('_extractJson: returns null for empty string', () => {
+      assert.strictEqual(_extractJson(''), null)
+    })
+
+    test('_extractJson: returns null for null input', () => {
+      assert.strictEqual(_extractJson(null), null)
+    })
+
+    test('_extractJson: handles nested objects', () => {
+      const result = _extractJson('{"a": {"b": {"c": 3}}}')
+      assert.strictEqual(result.a.b.c, 3)
+    })
+
+    // ── parseRollResponse: valid complete response ────────────────────────────
+
+    const VALID_ROLL_JSON = JSON.stringify({
+      candidates: ['去练习场挥刀', '在檐下发呆', '巡视本丸'],
+      chosen_index: 1,
+      event: {
+        title: '檐下发呆',
+        narrative: '靠着柱子发了会儿呆，春风轻轻吹过，思绪随着风散了。',
+        event_type: '檐下发呆',
+        location: '本丸·檐下',
+        participants: [],
+        mood: '慵懒',
+        duration_minutes: 40,
+        importance: 0.2,
+        threads_touched: [],
+        type: 'context',
+      },
+      plan_adherence: 'followed',
+      replan_hint: '',
+      want_to_share: {
+        decision: 'no',
+        target: '审神者',
+        reason: '这点小事不值当特意说',
+        draft: '',
+        thought: '',
+      },
+      next_state: {
+        location: '本丸·檐下',
+        current_activity: '发呆',
+        mood: '慵懒',
+        open_threads: [],
+      },
+      next_delay_minutes: 55,
+    })
+
+    test('parseRollResponse: valid JSON → _parseOk=true', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result._parseOk, true, 'should be ok')
+    })
+
+    test('parseRollResponse: candidates extracted', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.candidates.length, 3)
+      assert.ok(result.candidates[0].includes('练习'), 'first candidate text preserved')
+    })
+
+    test('parseRollResponse: chosen_index extracted', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.chosen_index, 1)
+    })
+
+    test('parseRollResponse: event fields extracted', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.event.title, '檐下发呆')
+      assert.strictEqual(result.event.event_type, '檐下发呆')
+      assert.strictEqual(result.event.mood, '慵懒')
+      assert.strictEqual(result.event.duration_minutes, 40)
+      assert.ok(Math.abs(result.event.importance - 0.2) < 0.001)
+    })
+
+    test('parseRollResponse: plan_adherence extracted', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.plan_adherence, 'followed')
+    })
+
+    test('parseRollResponse: want_to_share extracted', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.want_to_share.decision, 'no')
+      assert.ok(result.want_to_share.reason.includes('小事'))
+    })
+
+    test('parseRollResponse: next_state extracted', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.next_state.location, '本丸·檐下')
+      assert.strictEqual(result.next_state.mood, '慵懒')
+    })
+
+    test('parseRollResponse: next_delay_minutes extracted and clamped', () => {
+      const result = parseRollResponse(VALID_ROLL_JSON)
+      assert.strictEqual(result.next_delay_minutes, 55)
+    })
+
+    // ── parseRollResponse: JSON wrapped in prose ──────────────────────────────
+
+    test('parseRollResponse: prose-wrapped JSON extracted', () => {
+      const prose = '好的，根据当前状态，我来进行一次本丸日常 roll：\n' + VALID_ROLL_JSON + '\n以上就是本次的 roll 结果。'
+      const result = parseRollResponse(prose)
+      assert.strictEqual(result._parseOk, true, 'should parse through prose')
+      assert.strictEqual(result.event.title, '檐下发呆')
+    })
+
+    test('parseRollResponse: markdown code-fenced JSON parsed', () => {
+      const fenced = '```json\n' + VALID_ROLL_JSON + '\n```'
+      const result = parseRollResponse(fenced)
+      assert.strictEqual(result._parseOk, true, 'should parse markdown code block')
+    })
+
+    // ── parseRollResponse: missing fields defaulted ──────────────────────────
+
+    test('parseRollResponse: missing candidates → empty array', () => {
+      const minimal = JSON.stringify({
+        event: { title: '练习', narrative: '在练习场挥了刀', event_type: '练习' },
+        next_delay_minutes: 60,
+      })
+      const result = parseRollResponse(minimal)
+      assert.deepStrictEqual(result.candidates, [], 'candidates defaults to []')
+    })
+
+    test('parseRollResponse: missing want_to_share → defaults decision=no', () => {
+      const minimal = JSON.stringify({
+        event: { title: '练习', narrative: '在练习场挥了刀', event_type: '练习' },
+      })
+      const result = parseRollResponse(minimal)
+      assert.strictEqual(result.want_to_share.decision, 'no')
+    })
+
+    test('parseRollResponse: missing next_delay_minutes → defaults to 60', () => {
+      const minimal = JSON.stringify({
+        event: { title: '练习', narrative: '在练习场挥了刀', event_type: '练习' },
+      })
+      const result = parseRollResponse(minimal)
+      assert.strictEqual(result.next_delay_minutes, 60)
+    })
+
+    test('parseRollResponse: next_delay_minutes clamped to [10, 240]', () => {
+      const tooSmall = JSON.stringify({
+        event: { title: '练习', narrative: '挥刀', event_type: '练习' },
+        next_delay_minutes: 2,
+      })
+      const tooLarge = JSON.stringify({
+        event: { title: '练习', narrative: '挥刀', event_type: '练习' },
+        next_delay_minutes: 9999,
+      })
+      assert.strictEqual(parseRollResponse(tooSmall).next_delay_minutes, 10)
+      assert.strictEqual(parseRollResponse(tooLarge).next_delay_minutes, 240)
+    })
+
+    test('parseRollResponse: invalid plan_adherence → defaults to free', () => {
+      const json = JSON.stringify({
+        event: { title: '练习', narrative: '挥刀', event_type: '练习' },
+        plan_adherence: 'INVALID_VALUE',
+      })
+      const result = parseRollResponse(json)
+      assert.strictEqual(result.plan_adherence, 'free')
+    })
+
+    test('parseRollResponse: all valid plan_adherence values accepted', () => {
+      for (const val of ['followed', 'deviated', 'interrupted', 'free']) {
+        const json = JSON.stringify({
+          event: { title: 'X', narrative: 'Y', event_type: '练习' },
+          plan_adherence: val,
+        })
+        assert.strictEqual(parseRollResponse(json).plan_adherence, val, 'accepts ' + val)
+      }
+    })
+
+    test('parseRollResponse: want_to_share invalid decision → defaults to no', () => {
+      const json = JSON.stringify({
+        event: { title: 'X', narrative: 'Y', event_type: '练习' },
+        want_to_share: { decision: 'INVALID' },
+      })
+      assert.strictEqual(parseRollResponse(json).want_to_share.decision, 'no')
+    })
+
+    test('parseRollResponse: event.narrative truncated at 400 chars', () => {
+      const longNarrative = 'A'.repeat(500)
+      const json = JSON.stringify({
+        event: { title: 'X', narrative: longNarrative, event_type: '练习' },
+      })
+      const result = parseRollResponse(json)
+      assert.ok(result._parseOk, 'should still parse ok')
+      assert.ok(result.event.narrative.length <= 400, 'narrative capped at 400')
+    })
+
+    test('parseRollResponse: event.importance clamped to [0, 1]', () => {
+      const jsonHigh = JSON.stringify({
+        event: { title: 'X', narrative: 'Y', event_type: '练习', importance: 99 },
+      })
+      const jsonLow = JSON.stringify({
+        event: { title: 'X', narrative: 'Y', event_type: '练习', importance: -5 },
+      })
+      assert.ok(parseRollResponse(jsonHigh).event.importance <= 1, 'importance capped at 1')
+      assert.ok(parseRollResponse(jsonLow).event.importance >= 0, 'importance floored at 0')
+    })
+
+    // ── parseRollResponse: missing required event fields ─────────────────────
+
+    test('parseRollResponse: missing event.title → _parseOk=false', () => {
+      const json = JSON.stringify({
+        event: { narrative: 'Y', event_type: '练习' },
+      })
+      const result = parseRollResponse(json)
+      assert.strictEqual(result._parseOk, false, 'should fail without title')
+      assert.ok(result._parseError && result._parseError.includes('title'), 'error mentions title')
+    })
+
+    test('parseRollResponse: missing event.narrative → _parseOk=false', () => {
+      const json = JSON.stringify({
+        event: { title: 'X', event_type: '练习' },
+      })
+      const result = parseRollResponse(json)
+      assert.strictEqual(result._parseOk, false)
+    })
+
+    test('parseRollResponse: missing event.event_type → _parseOk=false', () => {
+      const json = JSON.stringify({
+        event: { title: 'X', narrative: 'Y' },
+      })
+      const result = parseRollResponse(json)
+      assert.strictEqual(result._parseOk, false)
+    })
+
+    test('parseRollResponse: missing event object → _parseOk=false', () => {
+      const json = JSON.stringify({ next_delay_minutes: 60 })
+      const result = parseRollResponse(json)
+      assert.strictEqual(result._parseOk, false)
+    })
+
+    // ── parseRollResponse: garbage input ─────────────────────────────────────
+
+    test('parseRollResponse: garbage string → _parseOk=false, no throw', () => {
+      const result = parseRollResponse('this is not json at all !!!')
+      assert.strictEqual(result._parseOk, false)
+      assert.ok(result._parseError, 'has error message')
+    })
+
+    test('parseRollResponse: empty string → _parseOk=false, no throw', () => {
+      const result = parseRollResponse('')
+      assert.strictEqual(result._parseOk, false)
+    })
+
+    test('parseRollResponse: null → _parseOk=false, no throw', () => {
+      const result = parseRollResponse(null)
+      assert.strictEqual(result._parseOk, false)
+    })
+
+    test('parseRollResponse: all-fields-default object is always returned', () => {
+      const result = parseRollResponse('garbage')
+      // Must always have these fields even on failure
+      assert.ok(Array.isArray(result.candidates), 'candidates present')
+      assert.ok(typeof result.chosen_index === 'number', 'chosen_index present')
+      assert.ok(result.event && typeof result.event.title === 'string', 'event.title present')
+      assert.ok(result.want_to_share && typeof result.want_to_share.decision === 'string', 'want_to_share.decision present')
+      assert.ok(typeof result.next_delay_minutes === 'number', 'next_delay_minutes present')
+    })
+
+    // ── sampleCandidate ───────────────────────────────────────────────────────
+
+    test('sampleCandidate: empty array → null', () => {
+      assert.strictEqual(sampleCandidate([], 0, 0.5), null)
+    })
+
+    test('sampleCandidate: null array → null', () => {
+      assert.strictEqual(sampleCandidate(null, 0, 0.5), null)
+    })
+
+    test('sampleCandidate: single element always returns it', () => {
+      for (const r of [0, 0.1, 0.5, 0.9, 0.999]) {
+        const result = sampleCandidate(['唯一候选'], 0, r)
+        assert.ok(result !== null, 'not null')
+        assert.strictEqual(result.text, '唯一候选')
+      }
+    })
+
+    test('sampleCandidate: r=0 → picks first candidate', () => {
+      const candidates = ['A', 'B', 'C']
+      const result = sampleCandidate(candidates, 2, 0)
+      assert.strictEqual(result.idx, 0, 'r=0 picks index 0')
+      assert.strictEqual(result.text, 'A')
+    })
+
+    test('sampleCandidate: r maps deterministically to index', () => {
+      const candidates = ['A', 'B', 'C']  // 3 candidates
+      // r < 1/3 → idx 0, 1/3 <= r < 2/3 → idx 1, 2/3 <= r < 1 → idx 2
+      assert.strictEqual(sampleCandidate(candidates, 0, 0.0).idx, 0)
+      assert.strictEqual(sampleCandidate(candidates, 0, 0.33).idx, 0)
+      assert.strictEqual(sampleCandidate(candidates, 0, 0.34).idx, 1)
+      assert.strictEqual(sampleCandidate(candidates, 0, 0.67).idx, 2)
+      assert.strictEqual(sampleCandidate(candidates, 0, 0.999).idx, 2)
+    })
+
+    test('sampleCandidate: chosenIndex is advisory (recorded as modelHint, not forced)', () => {
+      const candidates = ['A', 'B', 'C']
+      // r=0.9 → should pick idx 2 (C), even though chosenIndex=0
+      const result = sampleCandidate(candidates, 0, 0.9)
+      assert.strictEqual(result.idx, 2, 'program picks idx 2 from r, not forced to chosenIndex=0')
+      assert.strictEqual(result.modelHint, 0, 'modelHint records chosenIndex')
+      assert.strictEqual(result.text, 'C')
+    })
+
+    test('sampleCandidate: returns {text, idx, modelHint} shape', () => {
+      const result = sampleCandidate(['X', 'Y'], 1, 0.5)
+      assert.ok('text' in result, 'has text')
+      assert.ok('idx' in result, 'has idx')
+      assert.ok('modelHint' in result, 'has modelHint')
+    })
+
+    test('sampleCandidate: result.text matches candidates[idx]', () => {
+      const candidates = ['Apple', 'Banana', 'Cherry', 'Date']
+      for (const r of [0.1, 0.3, 0.6, 0.9]) {
+        const res = sampleCandidate(candidates, 0, r)
+        assert.strictEqual(res.text, candidates[res.idx], 'text matches candidates[idx]')
+      }
+    })
+
+    test('sampleCandidate: idx always in [0, candidates.length-1]', () => {
+      const candidates = ['A', 'B', 'C', 'D', 'E']
+      for (const r of [0, 0.2, 0.4, 0.6, 0.8, 0.999]) {
+        const res = sampleCandidate(candidates, 0, r)
+        assert.ok(res.idx >= 0, 'idx >= 0')
+        assert.ok(res.idx < candidates.length, 'idx < length')
+      }
+    })
+  }
+
+  // ===========================================================================
+  // Task 9: roll-fallback.js — fallbackRoll
+  // ===========================================================================
+  {
+    const { fallbackRoll, TEMPLATES, _seasonNote, _weatherNote } = require('./roll-fallback')
+
+    // ── _seasonNote ───────────────────────────────────────────────────────────
+
+    test('_seasonNote: returns season string for known seasons', () => {
+      assert.ok(_seasonNote({ season: '春' }).includes('春'), '春 note')
+      assert.ok(_seasonNote({ season: '夏' }).includes('暑'), '夏 note')
+      assert.ok(_seasonNote({ season: '秋' }).includes('秋'), '秋 note')
+      assert.ok(_seasonNote({ season: '冬' }).includes('寒'), '冬 note')
+    })
+
+    test('_seasonNote: returns empty string for unknown/null season', () => {
+      assert.strictEqual(_seasonNote({}), '', 'empty for missing season')
+      assert.strictEqual(_seasonNote(null), '', 'empty for null world')
+    })
+
+    test('_weatherNote: returns weather string for known weather', () => {
+      assert.ok(_weatherNote({ weather: '晴' }).length > 0, '晴 note')
+      assert.ok(_weatherNote({ weather: '雨' }).length > 0, '雨 note')
+      assert.ok(_weatherNote({ weather: '多云' }).length > 0, '多云 note')
+      assert.ok(_weatherNote({ weather: '阴' }).length > 0, '阴 note')
+    })
+
+    test('_weatherNote: returns empty string for unknown weather', () => {
+      assert.strictEqual(_weatherNote({}), '', 'empty for unknown weather')
+    })
+
+    // ── fallbackRoll: picks an available type ────────────────────────────────
+
+    test('fallbackRoll: returns event with event_type from availableTypes', () => {
+      const types = [{ type: '练习', weight: 3 }, { type: '思绪', weight: 1 }]
+      for (const r of [0.0, 0.3, 0.6, 0.9, 0.99]) {
+        const event = fallbackRoll(types, { season: '春', weather: '晴', locations: ['练习场'] }, { location: '练习场' }, r)
+        assert.ok(['练习', '思绪'].includes(event.event_type), 'event_type in available types, got: ' + event.event_type)
+      }
+    })
+
+    test('fallbackRoll: with r=0 picks first (or lightest) type by weighted distribution', () => {
+      // r=0 → threshold=0, first type with any weight wins
+      const types = [{ type: '练习', weight: 3 }, { type: '思绪', weight: 1 }]
+      const event = fallbackRoll(types, {}, {}, 0)
+      assert.strictEqual(event.event_type, '练习', 'r=0 picks first type')
+    })
+
+    test('fallbackRoll: result is deterministic with injected r', () => {
+      const types = [{ type: '檐下发呆', weight: 2 }, { type: '夜巡', weight: 2 }]
+      const world = { season: '冬', weather: '阴', locations: ['本丸·主屋'] }
+      const ls = { location: '本丸·主屋' }
+      const a = fallbackRoll(types, world, ls, 0.7)
+      const b = fallbackRoll(types, world, ls, 0.7)
+      assert.strictEqual(a.event_type, b.event_type, 'same r → same type')
+      assert.strictEqual(a.title, b.title, 'same r → same title')
+      assert.strictEqual(a.narrative, b.narrative, 'same r → same narrative')
+    })
+
+    test('fallbackRoll: empty availableTypes → still returns valid event', () => {
+      const event = fallbackRoll([], {}, {}, 0.5)
+      assert.ok(event && typeof event.title === 'string', 'has title')
+      assert.ok(event && typeof event.event_type === 'string', 'has event_type')
+    })
+
+    test('fallbackRoll: null availableTypes → still returns valid event', () => {
+      const event = fallbackRoll(null, {}, {}, 0.5)
+      assert.ok(event && typeof event.title === 'string', 'has title')
+    })
+
+    test('fallbackRoll: produces required §5.1 event shape', () => {
+      const types = [{ type: '思绪', weight: 1 }]
+      const event = fallbackRoll(types, { season: '春', weather: '晴' }, { location: '本丸·主屋' }, 0.5)
+      assert.ok(typeof event.title === 'string', 'has title')
+      assert.ok(typeof event.narrative === 'string', 'has narrative')
+      assert.ok(typeof event.event_type === 'string', 'has event_type')
+      assert.ok(typeof event.location === 'string', 'has location')
+      assert.ok(Array.isArray(event.participants), 'participants is array')
+      assert.ok(typeof event.mood === 'string', 'has mood')
+      assert.ok(typeof event.duration_minutes === 'number', 'has duration_minutes')
+      assert.ok(typeof event.importance === 'number', 'has importance')
+      assert.ok(Array.isArray(event.threads_touched), 'threads_touched is array')
+      assert.ok(typeof event.type === 'string', 'has type field')
+    })
+
+    test('fallbackRoll: location defaults to lifeState.location', () => {
+      const types = [{ type: '练习', weight: 1 }]
+      const event = fallbackRoll(types, {}, { location: '庭院' }, 0.5)
+      assert.strictEqual(event.location, '庭院', 'uses lifeState.location')
+    })
+
+    test('fallbackRoll: location falls back to world.locations[0] if no lifeState.location', () => {
+      const types = [{ type: '思绪', weight: 1 }]
+      const event = fallbackRoll(types, { locations: ['本丸·主屋', '庭院'] }, {}, 0.5)
+      assert.strictEqual(event.location, '本丸·主屋', 'uses world.locations[0]')
+    })
+
+    test('fallbackRoll: sourceModel is "fallback-template"', () => {
+      const event = fallbackRoll([{ type: '思绪', weight: 1 }], {}, {}, 0.5)
+      assert.strictEqual(event.sourceModel, 'fallback-template')
+    })
+
+    test('fallbackRoll: known type uses typed template pool', () => {
+      const types = [{ type: '夜巡', weight: 1 }]
+      const event = fallbackRoll(types, { weather: '晴' }, { location: '本丸·主屋' }, 0)
+      assert.strictEqual(event.event_type, '夜巡', 'event_type is 夜巡')
+      assert.ok(event.title.length > 0, 'title from template')
+    })
+
+    test('fallbackRoll: all default template types produce non-empty narrative', () => {
+      const defaultTypes = ['练习', '檐下发呆', '夜巡', '角色互动', '思绪']
+      const world = { season: '春', weather: '晴' }
+      const ls = { location: '本丸·主屋' }
+      for (const type of defaultTypes) {
+        const event = fallbackRoll([{ type, weight: 1 }], world, ls, 0)
+        assert.ok(event.narrative && event.narrative.length > 0, type + ' has narrative')
+      }
+    })
+
+    test('fallbackRoll: narrative incorporates season and weather info', () => {
+      const types = [{ type: '檐下发呆', weight: 1 }]
+      // Use 春 season
+      const event = fallbackRoll(types, { season: '春', weather: '晴' }, { location: '檐下' }, 0)
+      assert.ok(event.narrative.length > 0, 'narrative not empty')
+      // At least the template narrativeFn ran without throwing
+    })
+  }
+
+  // ===========================================================================
+  // Task 9: createRoller glue — end-to-end with fake deps (no real model/koishi)
+  // ===========================================================================
+  await runAsync('createRoller: roll skips when not LIVING', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    let appendCalled = false
+    const deps = {
+      presence: { isLiving: () => false },
+      guard: { acquire: () => false, release: () => {}, current: () => null },
+      getWorld: async () => ({ timeOfDay: '上午', season: '春', weather: '晴', locations: ['本丸·主屋'] }),
+      available: () => [{ type: '练习', weight: 1 }],
+      getState: async () => ({ location: '练习场', mood: 'neutral', open_threads: [], current_activity: '练习' }),
+      setState: async () => {},
+      recent: async () => [],
+      appendEvent: async () => { appendCalled = true },
+      getModel: async () => null,
+      invoke: async () => null,
+      continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: { scheduleTask: async () => 1, registerHandler: () => {} },
+      silenceState: () => ({}),
+      gatherPersona: async () => 'test persona',
+      planner: null,
+      onShare: async () => {},
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = { dryRun: false, fallbackToTemplate: false, defaultNextDelayMin: 60 }
+    const roller = createRoller(ctx, config, deps)
+
+    await roller.roll('test-preset', Date.now())
+    assert.strictEqual(appendCalled, false, 'appendEvent not called when not LIVING')
+  })
+
+  await runAsync('createRoller: roll skips when guard cannot acquire', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    let appendCalled = false
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => false, release: () => {}, current: () => 'roll' },
+      getWorld: async () => ({ timeOfDay: '上午', season: '春', weather: '晴', locations: ['本丸·主屋'] }),
+      available: () => [{ type: '练习', weight: 1 }],
+      getState: async () => ({ location: '练习场', mood: 'neutral', open_threads: [] }),
+      setState: async () => {},
+      recent: async () => [],
+      appendEvent: async () => { appendCalled = true },
+      getModel: async () => null,
+      invoke: async () => null,
+      continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: { scheduleTask: async () => 1, registerHandler: () => {} },
+      silenceState: () => ({}),
+      gatherPersona: async () => 'persona',
+      planner: null,
+      onShare: async () => {},
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = { dryRun: false, fallbackToTemplate: false, defaultNextDelayMin: 60 }
+    const roller = createRoller(ctx, config, deps)
+
+    await roller.roll('test-preset', Date.now())
+    assert.strictEqual(appendCalled, false, 'appendEvent not called when guard busy')
+  })
+
+  await runAsync('createRoller: dryRun skips appendEvent and setState', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    let appendCalled = false
+    let setCalled = false
+
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => true, release: () => {}, current: () => null },
+      getWorld: async () => ({ timeOfDay: '上午', season: '春', weather: '晴', locations: ['本丸·主屋'] }),
+      available: () => [{ type: '练习', weight: 1 }],
+      getState: async () => ({ location: '练习场', mood: 'neutral', open_threads: [] }),
+      setState: async () => { setCalled = true },
+      recent: async () => [],
+      appendEvent: async () => { appendCalled = true },
+      getModel: async () => null,
+      invoke: async () => null,
+      continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: { scheduleTask: async () => 1, registerHandler: () => {} },
+      silenceState: () => ({}),
+      gatherPersona: async () => 'persona',
+      planner: null,
+      onShare: async () => {},
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = { dryRun: true, fallbackToTemplate: false, defaultNextDelayMin: 60 }
+    const roller = createRoller(ctx, config, deps)
+
+    await roller.roll('test-preset', Date.now())
+    assert.strictEqual(appendCalled, false, 'appendEvent not called in dryRun')
+    assert.strictEqual(setCalled, false, 'setState not called in dryRun')
+  })
+
+  await runAsync('createRoller: fallback used when model unavailable', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    let appendCalledWith = null
+
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => true, release: () => {}, current: () => null },
+      getWorld: async () => ({ timeOfDay: '午后', season: '春', weather: '晴', locations: ['本丸·主屋'], externalLocations: [] }),
+      available: () => [{ type: '思绪', weight: 1 }],
+      getState: async () => ({ location: '本丸·主屋', mood: 'neutral', open_threads: [] }),
+      setState: async () => {},
+      recent: async () => [],
+      appendEvent: async (pid, ev) => { appendCalledWith = ev },
+      getModel: async () => null,  // model unavailable
+      invoke: async () => null,
+      continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: { scheduleTask: async () => 1, registerHandler: () => {} },
+      silenceState: () => ({}),
+      gatherPersona: async () => 'persona',
+      planner: null,
+      onShare: async () => {},
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = { dryRun: false, fallbackToTemplate: true, defaultNextDelayMin: 60 }
+    const roller = createRoller(ctx, config, deps)
+
+    await roller.roll('test-preset', Date.now())
+    assert.ok(appendCalledWith !== null, 'appendEvent called with fallback event')
+    assert.ok(appendCalledWith.sourceModel === 'fallback-template', 'sourceModel is fallback-template')
+  })
+
+  await runAsync('createRoller: fake model call → event appended and state set', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    const fakeModelResponse = JSON.stringify({
+      candidates: ['发呆', '喝茶', '散步'],
+      chosen_index: 0,
+      event: {
+        title: '午后发呆',
+        narrative: '靠着柱子发了会儿呆，日光渐渐移西，无事可想。',
+        event_type: '檐下发呆',
+        location: '本丸·檐下',
+        participants: [],
+        mood: '慵懒',
+        duration_minutes: 45,
+        importance: 0.15,
+        threads_touched: [],
+        type: 'context',
+      },
+      plan_adherence: 'followed',
+      replan_hint: '',
+      want_to_share: { decision: 'no', target: '审神者', reason: '', draft: '', thought: '' },
+      next_state: { location: '本丸·檐下', current_activity: '发呆', mood: '慵懒', open_threads: [] },
+      next_delay_minutes: 50,
+    })
+
+    let appendedEvent = null
+    let setStatePatch = null
+    let scheduledWake = null
+    let onShareArgs = null
+
+    const fakeModel = {
+      invoke: async () => ({ content: fakeModelResponse }),
+    }
+
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => true, release: () => {}, current: () => null },
+      getWorld: async () => ({
+        clock: Date.now() - 60000,
+        timeOfDay: '午后',
+        season: '春',
+        weather: '晴',
+        locations: ['本丸·主屋', '本丸·檐下', '庭院'],
+        externalLocations: ['城下町'],
+      }),
+      available: () => [{ type: '檐下发呆', weight: 2 }, { type: '思绪', weight: 1 }],
+      getState: async () => ({ location: '本丸·主屋', mood: 'neutral', open_threads: [], current_activity: '无' }),
+      setState: async (pid, patch) => { setStatePatch = patch },
+      recent: async () => [{ title: '练刀', narrative: '挥了一会儿', mood: '专注', ts: Date.now() - 3600000 }],
+      appendEvent: async (pid, ev) => { appendedEvent = ev },
+      getModel: async () => fakeModel,
+      invoke: async (model, msgs, opts) => {
+        // Call the fake model directly
+        const res = await model.invoke(msgs, opts)
+        const { extractText } = require('./model')
+        return extractText(res && res.content)
+      },
+      continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: {
+        scheduleTask: async (pid, fireAt, type) => { scheduledWake = { pid, fireAt, type }; return 99 },
+        registerHandler: () => {},
+      },
+      silenceState: () => ({ unansweredCount: 0 }),
+      gatherPersona: async () => '髭切膝丸 persona text',
+      planner: null,
+      onShare: async (pid, share) => { onShareArgs = { pid, share } },
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = {
+      dryRun: false,
+      fallbackToTemplate: true,
+      defaultNextDelayMin: 60,
+      stmMax: 8,
+      debug: false,
+    }
+    const roller = createRoller(ctx, config, deps)
+
+    await roller.roll('higekiri', Date.now())
+
+    assert.ok(appendedEvent !== null, 'appendEvent was called')
+    assert.strictEqual(appendedEvent.title, '午后发呆', 'event title correct')
+    assert.strictEqual(appendedEvent.event_type, '檐下发呆', 'event_type correct')
+    assert.ok(setStatePatch !== null, 'setState was called')
+    assert.ok(scheduledWake !== null, 'scheduleTask was called for next wake')
+    assert.strictEqual(scheduledWake.type, 'roll', 'next wake is roll type')
+    assert.ok(onShareArgs !== null, 'onShare was called')
+    assert.strictEqual(onShareArgs.share.decision, 'no', 'want_to_share.decision=no passed to onShare')
+  })
+
+  await runAsync('createRoller: continuity clamp violation is logged (still proceeds)', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    let warnCalled = false
+    let appendedEvent = null
+
+    const fakeModelResponse = JSON.stringify({
+      candidates: ['在城下町闲逛'],
+      chosen_index: 0,
+      event: {
+        title: '城下町一游',
+        narrative: '溜出本丸去城下町转了转。',
+        event_type: '思绪',
+        location: '未授权的地点',    // ← illegal location
+        participants: [],
+        mood: 'curious',
+        duration_minutes: 60,
+        importance: 0.3,
+        threads_touched: [],
+        type: 'context',
+      },
+      plan_adherence: 'free',
+      replan_hint: '',
+      want_to_share: { decision: 'no', target: '审神者', reason: '', draft: '', thought: '' },
+      next_state: { location: '未授权的地点', current_activity: '闲逛', mood: 'curious', open_threads: [] },
+      next_delay_minutes: 60,
+    })
+
+    const fakeModel = { invoke: async () => ({ content: fakeModelResponse }) }
+
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => true, release: () => {}, current: () => null },
+      getWorld: async () => ({
+        clock: Date.now() - 60000,
+        timeOfDay: '午后', season: '春', weather: '晴',
+        locations: ['本丸·主屋', '庭院'],
+        externalLocations: ['城下町'],
+      }),
+      available: () => [{ type: '思绪', weight: 1 }],
+      getState: async () => ({ location: '本丸·主屋', mood: 'neutral', open_threads: [] }),
+      setState: async () => {},
+      recent: async () => [],
+      appendEvent: async (pid, ev) => { appendedEvent = ev },
+      getModel: async () => fakeModel,
+      invoke: async (model, msgs, opts) => {
+        const res = await model.invoke(msgs, opts)
+        const { extractText } = require('./model')
+        return extractText(res && res.content)
+      },
+      continuityClamp: (ns, w) => {
+        // Real continuityClamp from world-continuity
+        const { continuityClamp } = require('./world-continuity')
+        return continuityClamp(ns, w)
+      },
+      scheduler: { scheduleTask: async () => 1, registerHandler: () => {} },
+      silenceState: () => ({}),
+      gatherPersona: async () => 'persona',
+      planner: null,
+      onShare: async () => {},
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: (...args) => { warnCalled = true }, debug: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = { dryRun: false, fallbackToTemplate: false, defaultNextDelayMin: 60 }
+    const roller = createRoller(ctx, config, deps)
+
+    await roller.roll('higekiri', Date.now())
+
+    assert.ok(warnCalled, 'warn was called (continuity clamp violation logged)')
+    assert.ok(appendedEvent !== null, 'event was still appended (clamped, not dropped)')
+  })
+
+  await runAsync('createRoller: registerHandlers registers roll and block handlers', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    const registeredHandlers = {}
+
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => true, release: () => {}, current: () => null },
+      getWorld: async () => ({}),
+      available: () => [],
+      getState: async () => ({}),
+      setState: async () => {},
+      recent: async () => [],
+      appendEvent: async () => {},
+      getModel: async () => null,
+      invoke: async () => null,
+      continuityClamp: (ns) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: {
+        scheduleTask: async () => 1,
+        registerHandler: (type, fn) => { registeredHandlers[type] = fn },
+      },
+      silenceState: () => ({}),
+      gatherPersona: async () => '',
+      planner: null,
+      onShare: async () => {},
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = {}
+    const roller = createRoller(ctx, config, deps)
+    roller.registerHandlers()
+
+    assert.ok('roll' in registeredHandlers, 'roll handler registered')
+    assert.ok('block' in registeredHandlers, 'block handler registered')
+    assert.strictEqual(typeof registeredHandlers.roll, 'function', 'roll handler is function')
+    assert.strictEqual(typeof registeredHandlers.block, 'function', 'block handler is function')
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }
