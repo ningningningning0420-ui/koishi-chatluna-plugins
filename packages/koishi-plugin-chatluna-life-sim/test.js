@@ -1810,6 +1810,685 @@ async function main() {
   // All three match the relay habit of not testing thin runtime glue.
   console.log('\n[NOTE] toLangchain(), getModel(), and invoke-with-messages not tested offline (need LangChain / koishi runtime)')
 
+  // ---------------------------------------------------------------------------
+  // Task 8: schedule-planner.js + schedule-assignment.js tests
+  // ---------------------------------------------------------------------------
+
+  const {
+    blockStartMs,
+    assignBlockTimes,
+    mergeAssignments,
+    currentBlock,
+    nextWake,
+    dayStartMsFor,
+    BLOCK_START_HOURS,
+    BLOCK_ORDER,
+    createPlanner,
+  } = require('./schedule-planner')
+
+  const { createAssignmentQueue } = require('./schedule-assignment')
+
+  // Reference: dayStartMs for a known day, computed once and reused.
+  // Use 2024-03-15 Asia/Shanghai midnight for deterministic tests.
+  // Asia/Shanghai is UTC+8, so midnight = 2024-03-14 16:00:00 UTC = 1710432000000
+  const TEST_TIMEZONE = 'Asia/Shanghai'
+  const TEST_DAY = '2024-03-15'
+  const TEST_DAY_START_MS = dayStartMsFor(TEST_DAY, TEST_TIMEZONE)
+
+  // Verify the dayStartMs is correct: adding 8h should give UTC midnight of 2024-03-15
+  // i.e. TEST_DAY_START_MS + 8*3600000 = Date.UTC(2024, 2, 15, 0, 0, 0) = 1710460800000
+  const EXPECTED_UTC_MIDNIGHT = Date.UTC(2024, 2, 15, 0, 0, 0)  // 2024-03-15T00:00:00Z
+
+  // ---------------------------------------------------------------------------
+  // blockStartMs
+  // ---------------------------------------------------------------------------
+
+  test('blockStartMs: 清晨 → dayStart + 5h', () => {
+    const ms = blockStartMs('清晨', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS + 5 * 3600000)
+  })
+
+  test('blockStartMs: 上午 → dayStart + 7h', () => {
+    const ms = blockStartMs('上午', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS + 7 * 3600000)
+  })
+
+  test('blockStartMs: 午后 → dayStart + 12h', () => {
+    const ms = blockStartMs('午后', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS + 12 * 3600000)
+  })
+
+  test('blockStartMs: 黄昏 → dayStart + 17h', () => {
+    const ms = blockStartMs('黄昏', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS + 17 * 3600000)
+  })
+
+  test('blockStartMs: 夜 → dayStart + 19h', () => {
+    const ms = blockStartMs('夜', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS + 19 * 3600000)
+  })
+
+  test('blockStartMs: 深夜 → dayStart + 23h', () => {
+    const ms = blockStartMs('深夜', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS + 23 * 3600000)
+  })
+
+  test('blockStartMs: unknown label → dayStart + 0 (midnight fallback)', () => {
+    const ms = blockStartMs('未知时段', TEST_DAY_START_MS)
+    assert.strictEqual(ms, TEST_DAY_START_MS)
+  })
+
+  test('blockStartMs: all 6 canonical labels have distinct start times', () => {
+    const starts = BLOCK_ORDER.map((lbl) => blockStartMs(lbl, TEST_DAY_START_MS))
+    const unique = new Set(starts)
+    assert.strictEqual(unique.size, BLOCK_ORDER.length, 'each label must map to a distinct start ms')
+  })
+
+  test('blockStartMs: starts are strictly increasing in BLOCK_ORDER', () => {
+    const starts = BLOCK_ORDER.map((lbl) => blockStartMs(lbl, TEST_DAY_START_MS))
+    for (let i = 1; i < starts.length; i++) {
+      assert.ok(starts[i] > starts[i - 1], `${BLOCK_ORDER[i]} should start after ${BLOCK_ORDER[i - 1]}`)
+    }
+  })
+
+  // ---------------------------------------------------------------------------
+  // assignBlockTimes
+  // ---------------------------------------------------------------------------
+
+  test('assignBlockTimes: empty input → empty output', () => {
+    assert.deepStrictEqual(assignBlockTimes([], TEST_DAY_START_MS), [])
+  })
+
+  test('assignBlockTimes: null input → empty output', () => {
+    assert.deepStrictEqual(assignBlockTimes(null, TEST_DAY_START_MS), [])
+  })
+
+  test('assignBlockTimes: single block → end is next day midnight', () => {
+    const blocks = [{ block: '上午', activity: '练习', location: '练习场' }]
+    const result = assignBlockTimes(blocks, TEST_DAY_START_MS)
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].start, TEST_DAY_START_MS + 7 * 3600000)
+    assert.strictEqual(result[0].end, TEST_DAY_START_MS + 24 * 3600000)
+  })
+
+  test('assignBlockTimes: two blocks sorted correctly', () => {
+    // Supply out-of-order to verify sorting
+    const blocks = [
+      { block: '夜', activity: '夜巡', location: '本丸各处' },
+      { block: '清晨', activity: '起身', location: '自室' },
+    ]
+    const result = assignBlockTimes(blocks, TEST_DAY_START_MS)
+    assert.strictEqual(result.length, 2)
+    assert.strictEqual(result[0].block, '清晨')
+    assert.strictEqual(result[1].block, '夜')
+    // end of first = start of second
+    assert.strictEqual(result[0].end, result[1].start)
+    // end of last = next day
+    assert.strictEqual(result[1].end, TEST_DAY_START_MS + 24 * 3600000)
+  })
+
+  test('assignBlockTimes: 5-block full day chain — end[i] = start[i+1]', () => {
+    const inputBlocks = [
+      { block: '清晨', activity: '起身擦刀', location: '自室' },
+      { block: '上午', activity: '对练', location: '练习场' },
+      { block: '午后', activity: '巡视', location: '庭院' },
+      { block: '黄昏', activity: '泡茶', location: '檐下' },
+      { block: '夜', activity: '夜巡', location: '本丸各处' },
+    ]
+    const result = assignBlockTimes(inputBlocks, TEST_DAY_START_MS)
+    assert.strictEqual(result.length, 5)
+    for (let i = 0; i < result.length - 1; i++) {
+      assert.strictEqual(result[i].end, result[i + 1].start,
+        `block[${i}].end should equal block[${i + 1}].start`)
+    }
+    // Last block ends at next day midnight
+    assert.strictEqual(result[4].end, TEST_DAY_START_MS + 24 * 3600000)
+  })
+
+  test('assignBlockTimes: preserves activity and location fields', () => {
+    const blocks = [{ block: '午后', activity: '看书', location: '庭院' }]
+    const result = assignBlockTimes(blocks, TEST_DAY_START_MS)
+    assert.strictEqual(result[0].activity, '看书')
+    assert.strictEqual(result[0].location, '庭院')
+  })
+
+  // ---------------------------------------------------------------------------
+  // mergeAssignments
+  // ---------------------------------------------------------------------------
+
+  test('mergeAssignments: no assignments → routine blocks with source=routine', () => {
+    const timedBlocks = assignBlockTimes([
+      { block: '上午', activity: '练习', location: '练习场' },
+    ], TEST_DAY_START_MS)
+    const result = mergeAssignments(timedBlocks, [], TEST_DAY_START_MS)
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].source, 'routine')
+    assert.strictEqual(result[0].status, 'pending')
+  })
+
+  test('mergeAssignments: assignment with dueBlock gets correct start time', () => {
+    const timedBlocks = assignBlockTimes([
+      { block: '上午', activity: '自由活动', location: '庭院' },
+    ], TEST_DAY_START_MS)
+    const dueAssignments = [{
+      id: 1,
+      desc: '和膝丸对练',
+      dueBlock: '午后',
+      assignedBy: '膝丸',
+      threadId: null,
+    }]
+    const result = mergeAssignments(timedBlocks, dueAssignments, TEST_DAY_START_MS)
+    // Should have 2 blocks: 上午 (routine) + 午后 (assigned)
+    assert.strictEqual(result.length, 2)
+    const assigned = result.find((b) => b.source === 'assigned')
+    assert.ok(assigned, 'assigned block should exist')
+    assert.strictEqual(assigned.start, TEST_DAY_START_MS + 12 * 3600000)  // 午后 = 12:00
+    assert.strictEqual(assigned.assignedBy, '膝丸')
+    assert.strictEqual(assigned.status, 'pending')
+  })
+
+  test('mergeAssignments: result is sorted by start ascending', () => {
+    const timedBlocks = assignBlockTimes([
+      { block: '清晨', activity: '起身', location: '自室' },
+      { block: '黄昏', activity: '泡茶', location: '檐下' },
+    ], TEST_DAY_START_MS)
+    const dueAssignments = [{
+      id: 2,
+      desc: '午后被安排的任务',
+      dueBlock: '午后',
+      assignedBy: '审神者',
+      threadId: null,
+    }]
+    const result = mergeAssignments(timedBlocks, dueAssignments, TEST_DAY_START_MS)
+    assert.strictEqual(result.length, 3)
+    // Verify sorted
+    for (let i = 1; i < result.length; i++) {
+      assert.ok(result[i].start >= result[i - 1].start,
+        `block[${i}].start should be >= block[${i - 1}].start`)
+    }
+  })
+
+  test('mergeAssignments: assignment without dueBlock gets midnight start', () => {
+    const timedBlocks = []
+    const dueAssignments = [{
+      id: 3,
+      desc: '没有时间的任务',
+      dueBlock: null,
+      assignedBy: '审神者',
+      threadId: null,
+    }]
+    const result = mergeAssignments(timedBlocks, dueAssignments, TEST_DAY_START_MS)
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].start, TEST_DAY_START_MS)  // midnight
+    assert.strictEqual(result[0].source, 'assigned')
+  })
+
+  test('mergeAssignments: all blocks get status=pending', () => {
+    const timedBlocks = assignBlockTimes([
+      { block: '上午', activity: '练习', location: '练习场' },
+    ], TEST_DAY_START_MS)
+    const dueAssignments = [{
+      id: 4,
+      desc: '被安排任务',
+      dueBlock: '午后',
+      assignedBy: '近侍',
+      threadId: null,
+    }]
+    const result = mergeAssignments(timedBlocks, dueAssignments, TEST_DAY_START_MS)
+    for (const b of result) {
+      assert.strictEqual(b.status, 'pending')
+    }
+  })
+
+  test('mergeAssignments: empty timedBlocks + empty assignments → empty result', () => {
+    const result = mergeAssignments([], [], TEST_DAY_START_MS)
+    assert.deepStrictEqual(result, [])
+  })
+
+  // ---------------------------------------------------------------------------
+  // currentBlock
+  // ---------------------------------------------------------------------------
+
+  test('currentBlock: null blocks → null', () => {
+    assert.strictEqual(currentBlock(null, TEST_DAY_START_MS + 8 * 3600000), null)
+  })
+
+  test('currentBlock: empty blocks → null', () => {
+    assert.strictEqual(currentBlock([], TEST_DAY_START_MS + 8 * 3600000), null)
+  })
+
+  test('currentBlock: nowMs before all blocks → null', () => {
+    const blocks = assignBlockTimes([
+      { block: '上午', activity: '练习', location: '练习场' },
+    ], TEST_DAY_START_MS)
+    // before 上午 (07:00)
+    const nowMs = TEST_DAY_START_MS + 6 * 3600000  // 06:00
+    assert.strictEqual(currentBlock(blocks, nowMs), null)
+  })
+
+  test('currentBlock: nowMs at exact block start → included in that block', () => {
+    const blocks = assignBlockTimes([
+      { block: '上午', activity: '练习', location: '练习场' },
+      { block: '午后', activity: '巡视', location: '庭院' },
+    ], TEST_DAY_START_MS)
+    // exact start of 上午
+    const nowMs = TEST_DAY_START_MS + 7 * 3600000
+    const b = currentBlock(blocks, nowMs)
+    assert.ok(b !== null)
+    assert.strictEqual(b.block, '上午')
+  })
+
+  test('currentBlock: nowMs at exact block end → NOT included (open end)', () => {
+    const blocks = assignBlockTimes([
+      { block: '上午', activity: '练习', location: '练习场' },
+      { block: '午后', activity: '巡视', location: '庭院' },
+    ], TEST_DAY_START_MS)
+    // exact end of 上午 = start of 午后
+    const nowMs = TEST_DAY_START_MS + 12 * 3600000
+    const b = currentBlock(blocks, nowMs)
+    assert.ok(b !== null)
+    assert.strictEqual(b.block, '午后')  // falls into 午后
+  })
+
+  test('currentBlock: nowMs mid-block → correct block returned', () => {
+    const blocks = assignBlockTimes([
+      { block: '清晨', activity: '起身', location: '自室' },
+      { block: '上午', activity: '练习', location: '练习场' },
+      { block: '午后', activity: '巡视', location: '庭院' },
+    ], TEST_DAY_START_MS)
+    // 14:30 = afternoon
+    const nowMs = TEST_DAY_START_MS + 14 * 3600000 + 30 * 60000
+    const b = currentBlock(blocks, nowMs)
+    assert.ok(b !== null)
+    assert.strictEqual(b.block, '午后')
+  })
+
+  test('currentBlock: nowMs after last block end → null', () => {
+    const blocks = assignBlockTimes([
+      { block: '夜', activity: '夜巡', location: '本丸各处' },
+    ], TEST_DAY_START_MS)
+    // next day
+    const nowMs = TEST_DAY_START_MS + 25 * 3600000
+    assert.strictEqual(currentBlock(blocks, nowMs), null)
+  })
+
+  // ---------------------------------------------------------------------------
+  // nextWake — §5.12 heart
+  // ---------------------------------------------------------------------------
+
+  test('nextWake: picks minimum of three candidates', () => {
+    const now = 1000000
+    const delay = now + 60 * 60000    // now + 60 min
+    const blockEnd = now + 30 * 60000  // now + 30 min (earliest)
+    const timedStart = now + 45 * 60000
+    const result = nextWake(delay, blockEnd, timedStart)
+    assert.strictEqual(result, blockEnd)
+  })
+
+  test('nextWake: next_delay beyond block end → block end wins (§5.12 clamping)', () => {
+    const now = 1000000
+    const delayBeyondBlock = now + 120 * 60000  // 2h from now
+    const blockEnd = now + 30 * 60000           // 30 min from now (earlier)
+    const result = nextWake(delayBeyondBlock, blockEnd, null)
+    assert.strictEqual(result, blockEnd)
+  })
+
+  test('nextWake: null curBlockEnd and nextTimedStart → returns nextDelayMs', () => {
+    const delayMs = 1000000 + 60 * 60000
+    const result = nextWake(delayMs, null, null)
+    assert.strictEqual(result, delayMs)
+  })
+
+  test('nextWake: null nextDelayMs → picks min of the other two', () => {
+    const blockEnd = 1000000 + 30 * 60000
+    const timedStart = 1000000 + 45 * 60000
+    const result = nextWake(null, blockEnd, timedStart)
+    assert.strictEqual(result, blockEnd)
+  })
+
+  test('nextWake: all null → returns null (caller falls back to default)', () => {
+    const result = nextWake(null, null, null)
+    assert.strictEqual(result, null)
+  })
+
+  test('nextWake: undefined values treated same as null', () => {
+    const result = nextWake(undefined, undefined, undefined)
+    assert.strictEqual(result, null)
+  })
+
+  test('nextWake: two null + one value → returns that value', () => {
+    const timedStart = 9999999
+    const result = nextWake(null, undefined, timedStart)
+    assert.strictEqual(result, timedStart)
+  })
+
+  test('nextWake: all same value → returns that value', () => {
+    const t = 1234567890
+    const result = nextWake(t, t, t)
+    assert.strictEqual(result, t)
+  })
+
+  test('nextWake: timedStart is earliest', () => {
+    const timedStart = 1000000
+    const blockEnd = 1000000 + 30 * 60000
+    const delay = 1000000 + 60 * 60000
+    const result = nextWake(delay, blockEnd, timedStart)
+    assert.strictEqual(result, timedStart)
+  })
+
+  test('nextWake: delay is earliest', () => {
+    const delay = 1000000
+    const blockEnd = 1000000 + 30 * 60000
+    const timedStart = 1000000 + 60 * 60000
+    const result = nextWake(delay, blockEnd, timedStart)
+    assert.strictEqual(result, delay)
+  })
+
+  test('nextWake: null nextDelayMs + null nextTimedStart → returns curBlockEndMs', () => {
+    const blockEnd = 1000000 + 30 * 60000
+    const result = nextWake(null, blockEnd, null)
+    assert.strictEqual(result, blockEnd)
+  })
+
+  // ---------------------------------------------------------------------------
+  // createAssignmentQueue glue tests (fake-ctx)
+  // ---------------------------------------------------------------------------
+
+  await runAsync('createAssignmentQueue: enqueue inserts a row to DB', async () => {
+    const ctx = makeFakeCtx()
+    const q = createAssignmentQueue(ctx)
+    await q.enqueue({
+      presetId: 'higekiri',
+      desc: '和膝丸对练',
+      dueDay: '2024-03-15',
+      dueBlock: '午后',
+      source: '约定',
+      assignedBy: '膝丸',
+    })
+    const rows = ctx.database._store['life_sim_assignment'] || []
+    assert.strictEqual(rows.length, 1)
+    assert.strictEqual(rows[0].presetId, 'higekiri')
+    assert.strictEqual(rows[0].desc, '和膝丸对练')
+    assert.strictEqual(rows[0].source, '约定')
+    assert.strictEqual(rows[0].status, 'pending')
+  })
+
+  await runAsync('createAssignmentQueue: dueFor returns pending rows on or before day', async () => {
+    const ctx = makeFakeCtx()
+    const q = createAssignmentQueue(ctx)
+    await q.enqueue({ presetId: 'higekiri', desc: '今天的任务', dueDay: '2024-03-15', source: '审神者', assignedBy: '审神者' })
+    await q.enqueue({ presetId: 'higekiri', desc: '明天的任务', dueDay: '2024-03-16', source: '审神者', assignedBy: '审神者' })
+    await q.enqueue({ presetId: 'higekiri', desc: '昨天的任务(overdue)', dueDay: '2024-03-14', source: '约定', assignedBy: '膝丸' })
+
+    const due = await q.dueFor('higekiri', '2024-03-15')
+    // Should include today's and yesterday's (overdue) but not tomorrow's
+    assert.strictEqual(due.length, 2)
+    assert.ok(due.every((r) => r.dueDay <= '2024-03-15'))
+  })
+
+  await runAsync('createAssignmentQueue: dueFor includes assignments with null dueDay', async () => {
+    const ctx = makeFakeCtx()
+    const q = createAssignmentQueue(ctx)
+    await q.enqueue({ presetId: 'higekiri', desc: '无期限任务', dueDay: null, source: '审神者', assignedBy: '审神者' })
+    const due = await q.dueFor('higekiri', '2024-03-15')
+    assert.strictEqual(due.length, 1)
+  })
+
+  await runAsync('createAssignmentQueue: dueFor excludes done assignments', async () => {
+    const ctx = makeFakeCtx()
+    const q = createAssignmentQueue(ctx)
+    await q.enqueue({ presetId: 'higekiri', desc: '待完成', dueDay: '2024-03-15', source: '审神者', assignedBy: '审神者' })
+    const rows = ctx.database._store['life_sim_assignment']
+    // Mark it done directly
+    rows[0].status = 'done'
+    const due = await q.dueFor('higekiri', '2024-03-15')
+    assert.strictEqual(due.length, 0)
+  })
+
+  await runAsync('createAssignmentQueue: markDone updates status', async () => {
+    const ctx = makeFakeCtx()
+    const q = createAssignmentQueue(ctx)
+    await q.enqueue({ presetId: 'higekiri', desc: '完成任务', dueDay: '2024-03-15', source: '审神者', assignedBy: '审神者' })
+    const row = (ctx.database._store['life_sim_assignment'] || [])[0]
+    assert.strictEqual(row.status, 'pending')
+    await q.markDone(row.id)
+    assert.strictEqual(row.status, 'done')
+  })
+
+  await runAsync('createAssignmentQueue: dueFor filters by presetId', async () => {
+    const ctx = makeFakeCtx()
+    const q = createAssignmentQueue(ctx)
+    await q.enqueue({ presetId: 'higekiri', desc: '髭切任务', dueDay: '2024-03-15', source: '约定', assignedBy: '膝丸' })
+    await q.enqueue({ presetId: 'hizamaru', desc: '膝丸任务', dueDay: '2024-03-15', source: '约定', assignedBy: '髭切' })
+    const due = await q.dueFor('higekiri', '2024-03-15')
+    assert.strictEqual(due.length, 1)
+    assert.strictEqual(due[0].presetId, 'higekiri')
+  })
+
+  // ---------------------------------------------------------------------------
+  // createPlanner glue tests (fake-ctx)
+  // ---------------------------------------------------------------------------
+
+  await runAsync('createPlanner: planDay generates and persists a plan', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const fakeBlocks = [
+      { block: '清晨', activity: '起身', location: '自室' },
+      { block: '上午', activity: '对练', location: '练习场' },
+    ]
+    const deps = {
+      blocksForToday: async () => fakeBlocks,
+      assignmentQueue: { dueFor: async () => [] },
+      scheduler: { scheduleTask: async () => 1 },
+    }
+    const planner = createPlanner(ctx, config, deps)
+    const plan = await planner.planDay('higekiri', TEST_DAY, TEST_DAY_START_MS + 8 * 3600000)
+
+    assert.strictEqual(plan.presetId, 'higekiri')
+    assert.strictEqual(plan.day, TEST_DAY)
+    assert.ok(Array.isArray(plan.blocks))
+    assert.strictEqual(plan.blocks.length, 2)
+    assert.ok(plan.generatedAt instanceof Date)
+
+    // Verify persisted
+    const rows = ctx.database._store['life_sim_plan'] || []
+    assert.strictEqual(rows.length, 1)
+    assert.strictEqual(rows[0].presetId, 'higekiri')
+  })
+
+  await runAsync('createPlanner: planDay merges assignments into plan', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const fakeBlocks = [
+      { block: '上午', activity: '自由活动', location: '庭院' },
+    ]
+    const fakeAssignments = [{
+      id: 1,
+      presetId: 'higekiri',
+      desc: '和膝丸对练',
+      dueBlock: '午后',
+      assignedBy: '膝丸',
+      threadId: null,
+    }]
+    const deps = {
+      blocksForToday: async () => fakeBlocks,
+      assignmentQueue: { dueFor: async () => fakeAssignments },
+      scheduler: { scheduleTask: async () => 1 },
+    }
+    const planner = createPlanner(ctx, config, deps)
+    const plan = await planner.planDay('higekiri', TEST_DAY, TEST_DAY_START_MS + 8 * 3600000)
+
+    assert.strictEqual(plan.blocks.length, 2)
+    const assigned = plan.blocks.find((b) => b.source === 'assigned')
+    assert.ok(assigned, 'should have an assigned block')
+    assert.strictEqual(assigned.activity, '和膝丸对练')
+  })
+
+  await runAsync('createPlanner: getPlan reads persisted plan', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const deps = {
+      blocksForToday: async () => [{ block: '上午', activity: '日常', location: '庭院' }],
+      assignmentQueue: { dueFor: async () => [] },
+      scheduler: { scheduleTask: async () => 1 },
+    }
+    const planner = createPlanner(ctx, config, deps)
+    await planner.planDay('higekiri', TEST_DAY, TEST_DAY_START_MS)
+    const plan = await planner.getPlan('higekiri', TEST_DAY)
+    assert.ok(plan !== null)
+    assert.strictEqual(plan.presetId, 'higekiri')
+    assert.ok(Array.isArray(plan.blocks))
+  })
+
+  await runAsync('createPlanner: getPlan returns null for missing plan', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const deps = {}
+    const planner = createPlanner(ctx, config, deps)
+    const plan = await planner.getPlan('nobody', '2024-01-01')
+    assert.strictEqual(plan, null)
+  })
+
+  await runAsync('createPlanner: planDay upserts on second call (no duplicate rows)', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const deps = {
+      blocksForToday: async () => [{ block: '上午', activity: '日常', location: '庭院' }],
+      assignmentQueue: { dueFor: async () => [] },
+      scheduler: { scheduleTask: async () => 1 },
+    }
+    const planner = createPlanner(ctx, config, deps)
+    await planner.planDay('higekiri', TEST_DAY, TEST_DAY_START_MS)
+    await planner.planDay('higekiri', TEST_DAY, TEST_DAY_START_MS)
+    const rows = ctx.database._store['life_sim_plan'] || []
+    assert.strictEqual(rows.length, 1, 'should upsert, not duplicate')
+  })
+
+  await runAsync('createPlanner: replan marks fromBlock as interrupted and later as skipped', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const deps = {
+      blocksForToday: async () => [
+        { block: '清晨', activity: '起身', location: '自室' },
+        { block: '上午', activity: '对练', location: '练习场' },
+        { block: '午后', activity: '巡视', location: '庭院' },
+      ],
+      assignmentQueue: { dueFor: async () => [] },
+      scheduler: { scheduleTask: async () => 1 },
+    }
+    const planner = createPlanner(ctx, config, deps)
+    const nowMs = TEST_DAY_START_MS + 8 * 3600000  // 08:00, in 上午 block
+    await planner.planDay('higekiri', TEST_DAY, nowMs)
+    const updated = await planner.replan('higekiri', 1, nowMs)  // fromBlockIdx=1 (上午)
+
+    assert.ok(updated !== null)
+    assert.strictEqual(updated.blocks[0].status, 'pending')    // 清晨: untouched
+    assert.strictEqual(updated.blocks[1].status, 'interrupted') // 上午: interrupted
+    assert.strictEqual(updated.blocks[2].status, 'skipped')    // 午后: skipped
+  })
+
+  await runAsync('createPlanner: replan returns null if no plan exists', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const deps = {}
+    const planner = createPlanner(ctx, config, deps)
+    const nowMs = TEST_DAY_START_MS + 8 * 3600000
+    const result = await planner.replan('nobody', 0, nowMs)
+    assert.strictEqual(result, null)
+  })
+
+  await runAsync('createPlanner: currentBlockNow returns the block for current time', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const deps = {
+      blocksForToday: async () => [
+        { block: '上午', activity: '对练', location: '练习场' },
+        { block: '午后', activity: '巡视', location: '庭院' },
+      ],
+      assignmentQueue: { dueFor: async () => [] },
+      scheduler: { scheduleTask: async () => 1 },
+    }
+    const planner = createPlanner(ctx, config, deps)
+    const nowMs = TEST_DAY_START_MS + 9 * 3600000  // 09:00 → in 上午
+    await planner.planDay('higekiri', TEST_DAY, nowMs)
+    const block = await planner.currentBlockNow('higekiri', nowMs)
+    assert.ok(block !== null)
+    assert.strictEqual(block.block, '上午')
+  })
+
+  await runAsync('createPlanner: scheduleBlockWakes calls scheduler for future blocks', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const scheduledCalls = []
+    const deps = {
+      blocksForToday: async () => [],
+      assignmentQueue: { dueFor: async () => [] },
+      scheduler: {
+        scheduleTask: async (presetId, fireAt, type, payload) => {
+          scheduledCalls.push({ presetId, fireAt, type, payload })
+          return scheduledCalls.length
+        },
+      },
+    }
+    const planner = createPlanner(ctx, config, deps)
+
+    // Fake plan with two future blocks
+    const futureStart1 = Date.now() + 60 * 60000
+    const futureStart2 = Date.now() + 120 * 60000
+    const fakePlan = {
+      presetId: 'higekiri',
+      day: TEST_DAY,
+      blocks: [
+        { block: '上午', activity: '对练', source: 'routine', start: futureStart1, end: futureStart2 },
+        { block: '午后', activity: '巡视', source: 'routine', start: futureStart2, end: futureStart2 + 5 * 3600000 },
+      ],
+    }
+
+    await planner.scheduleBlockWakes('higekiri', fakePlan)
+    assert.strictEqual(scheduledCalls.length, 2)
+    assert.strictEqual(scheduledCalls[0].type, 'block')
+    assert.strictEqual(scheduledCalls[1].type, 'block')
+  })
+
+  await runAsync('createPlanner: scheduleBlockWakes skips past blocks', async () => {
+    const ctx = makeFakeCtx()
+    const config = { timezone: 'Asia/Shanghai' }
+    const scheduledCalls = []
+    const deps = {
+      scheduler: {
+        scheduleTask: async () => { scheduledCalls.push(1); return 1 },
+      },
+    }
+    const planner = createPlanner(ctx, config, deps)
+
+    const pastStart = Date.now() - 60 * 60000  // 1h ago
+    const futureStart = Date.now() + 60 * 60000
+
+    const fakePlan = {
+      presetId: 'higekiri',
+      day: TEST_DAY,
+      blocks: [
+        { block: '清晨', activity: '起身', source: 'routine', start: pastStart, end: futureStart },
+        { block: '上午', activity: '对练', source: 'routine', start: futureStart, end: futureStart + 5 * 3600000 },
+      ],
+    }
+
+    await planner.scheduleBlockWakes('higekiri', fakePlan)
+    // Only future block should be scheduled
+    assert.strictEqual(scheduledCalls.length, 1)
+  })
+
+  // ---------------------------------------------------------------------------
+  // dayStartMsFor — verify Asia/Shanghai offset is correct
+  // ---------------------------------------------------------------------------
+
+  test('dayStartMsFor: 2024-03-15 Asia/Shanghai → 16:00 UTC of 2024-03-14', () => {
+    // Asia/Shanghai is UTC+8, so local midnight = UTC 2024-03-14T16:00:00Z
+    const expected = Date.UTC(2024, 2, 14, 16, 0, 0, 0)
+    assert.strictEqual(TEST_DAY_START_MS, expected,
+      `Expected ${expected} but got ${TEST_DAY_START_MS}`)
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }
