@@ -104,9 +104,16 @@ const DEFAULT_GRACE_MS = 5 * 60 * 1000  // 5 minutes
  * @param {object} ctx     – koishi context
  * @param {object} config  – plugin config (not used in task 2 directly, reserved)
  * @param {object} logger  – ctx.logger('chatluna-life-sim')
+ * @param {object} [guard] – shared ConcurrencyGuard instance (optional; if omitted,
+ *                           an internal guard is created — prefer passing the shared one)
  * @returns {{ scheduleTask, onReady, dispose, registerHandler }}
  */
-function createScheduler(ctx, config, logger) {
+function createScheduler(ctx, config, logger, guard) {
+  // Use the injected guard if provided; otherwise create a local one (backward compat).
+  // Task 3 refactor: index.js creates ONE guard and passes it to both scheduler and presence.
+  if (!guard) {
+    guard = createConcurrencyGuard()
+  }
   // Map<taskId, disposerFn>  — ctx.setTimeout disposers
   const _timers = new Map()
 
@@ -320,7 +327,7 @@ function createScheduler(ctx, config, logger) {
     logger.info('[scheduler] disposed: %d timers cleared', _timers.size)
   }
 
-  return { scheduleTask, onReady, dispose, registerHandler }
+  return { scheduleTask, onReady, dispose, registerHandler, guard }
 }
 
 // ---------------------------------------------------------------------------

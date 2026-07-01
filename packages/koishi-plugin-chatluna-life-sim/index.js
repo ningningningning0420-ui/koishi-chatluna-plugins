@@ -2,11 +2,13 @@
 
 // koishi-plugin-chatluna-life-sim — plugin entry point.
 // This file: register Config schema, extend all DB tables, set up ready/dispose hooks.
-// Scheduler (Task 2) is wired here. Roller / memory / proactive bridge etc. are later tasks.
+// Scheduler (Task 2) and PresenceState (Task 3) are wired here.
+// Roller / memory / proactive bridge etc. are later tasks.
 
 const { Config } = require('./config')
 const { registerTables } = require('./db')
-const { createScheduler } = require('./scheduler')
+const { createConcurrencyGuard, createScheduler } = require('./scheduler')
+const { createPresence } = require('./presence')
 
 exports.name = 'chatluna-life-sim'
 
@@ -20,13 +22,23 @@ exports.apply = (ctx, config) => {
   // Register all DB tables. This is idempotent — safe to call on every plugin load.
   registerTables(ctx)
 
-  // Instantiate scheduler. Later tasks call scheduler.registerHandler(type, fn)
-  // to plug in roll / consolidate / etc. handlers before onReady fires.
-  const scheduler = createScheduler(ctx, config, logger)
+  // Task 3 refactor: create ONE shared ConcurrencyGuard passed to both scheduler and presence.
+  // This ensures a single lock map across all units (§5.11).
+  const guard = createConcurrencyGuard()
 
-  // Expose scheduler on ctx so later tasks in the same plugin can reach it.
+  // Instantiate scheduler with the shared guard.
+  // Later tasks call scheduler.registerHandler(type, fn) to plug in handlers.
+  const scheduler = createScheduler(ctx, config, logger, guard)
+
+  // Instantiate PresenceState with the same shared guard.
+  // Subscribes to chatluna_character/message_collect internally.
+  const presence = createPresence(ctx, config, guard, logger)
+
+  // Expose scheduler and presence on exports so later tasks in the same plugin can reach them.
   // (Not a full koishi service — just a plugin-internal reference via closure.)
   exports._scheduler = scheduler
+  exports._presence = presence
+  exports._guard = guard
 
   ctx.on('ready', async () => {
     logger.info(
@@ -45,7 +57,9 @@ exports.apply = (ctx, config) => {
   })
 
   ctx.on('dispose', () => {
-    // Clear in-memory timers (leave DB rows intact per §5.9).
+    // Clear presence timers and event subscriptions.
+    presence.dispose()
+    // Clear in-memory scheduler timers (leave DB rows intact per §5.9).
     scheduler.dispose()
     logger.info('chatluna-life-sim disposed.')
   })

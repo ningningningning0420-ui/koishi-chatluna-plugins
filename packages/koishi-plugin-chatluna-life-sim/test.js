@@ -249,6 +249,81 @@ test('partitionPending: empty input → all empty', () => {
   assert.strictEqual(result.futureTasks.length, 0)
 })
 
+// ---- presence.js: nextPresenceState + derivePresetKey (pure logic) ----
+
+const { nextPresenceState, derivePresenceKey } = require('./presence')
+
+// nextPresenceState: full (state, event) transition table
+// States: 'WITH_USER' | 'LINGERING' | 'LIVING'
+// Events: 'userMessage' | 'lingerTimeout' | 'goLive'
+
+test('presence: LIVING + userMessage → WITH_USER', () => {
+  assert.strictEqual(nextPresenceState('LIVING', 'userMessage'), 'WITH_USER')
+})
+
+test('presence: WITH_USER + userMessage → WITH_USER (stay)', () => {
+  assert.strictEqual(nextPresenceState('WITH_USER', 'userMessage'), 'WITH_USER')
+})
+
+test('presence: LINGERING + userMessage → WITH_USER (re-capture)', () => {
+  assert.strictEqual(nextPresenceState('LINGERING', 'userMessage'), 'WITH_USER')
+})
+
+test('presence: WITH_USER + lingerTimeout → LINGERING', () => {
+  assert.strictEqual(nextPresenceState('WITH_USER', 'lingerTimeout'), 'LINGERING')
+})
+
+test('presence: LINGERING + lingerTimeout → LINGERING (noop / already lingering)', () => {
+  assert.strictEqual(nextPresenceState('LINGERING', 'lingerTimeout'), 'LINGERING')
+})
+
+test('presence: LIVING + lingerTimeout → LIVING (noop)', () => {
+  assert.strictEqual(nextPresenceState('LIVING', 'lingerTimeout'), 'LIVING')
+})
+
+test('presence: LINGERING + goLive → LIVING', () => {
+  assert.strictEqual(nextPresenceState('LINGERING', 'goLive'), 'LIVING')
+})
+
+test('presence: WITH_USER + goLive → LIVING (force-go)', () => {
+  assert.strictEqual(nextPresenceState('WITH_USER', 'goLive'), 'LIVING')
+})
+
+test('presence: LIVING + goLive → LIVING (noop)', () => {
+  assert.strictEqual(nextPresenceState('LIVING', 'goLive'), 'LIVING')
+})
+
+test('presence: unknown state + userMessage → WITH_USER (fallback to default)', () => {
+  assert.strictEqual(nextPresenceState(undefined, 'userMessage'), 'WITH_USER')
+})
+
+test('presence: unknown event → state unchanged (defensive)', () => {
+  assert.strictEqual(nextPresenceState('LIVING', 'bogusEvent'), 'LIVING')
+  assert.strictEqual(nextPresenceState('WITH_USER', 'bogusEvent'), 'WITH_USER')
+  assert.strictEqual(nextPresenceState('LINGERING', 'bogusEvent'), 'LINGERING')
+})
+
+// derivePresenceKey: pure session → key helper
+test('derivePresenceKey: direct session → private:userId', () => {
+  const session = { isDirect: true, userId: 'u123', guildId: null }
+  assert.strictEqual(derivePresenceKey(session), 'private:u123')
+})
+
+test('derivePresenceKey: group session with guildId → group:guildId', () => {
+  const session = { isDirect: false, userId: 'u123', guildId: 'g456', channelId: 'c789' }
+  assert.strictEqual(derivePresenceKey(session), 'group:g456')
+})
+
+test('derivePresenceKey: group session no guildId falls back to channelId', () => {
+  const session = { isDirect: false, userId: 'u123', guildId: null, channelId: 'c789' }
+  assert.strictEqual(derivePresenceKey(session), 'group:c789')
+})
+
+test('derivePresenceKey: isDirect falsy (0/empty/undefined) → group path', () => {
+  const session = { isDirect: 0, userId: 'u1', guildId: 'g1', channelId: 'c1' }
+  assert.strictEqual(derivePresenceKey(session), 'group:g1')
+})
+
 async function main() {
   await runAsync('invoke: passes signal to model (empty msgs, no langchain needed)', async () => {
     let receivedOpts
