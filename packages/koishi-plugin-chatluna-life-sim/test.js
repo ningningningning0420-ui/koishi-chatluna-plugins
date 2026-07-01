@@ -1006,6 +1006,265 @@ test('continuityClamp: null nextState → ok=true, clamped={} (graceful)', () =>
   assert.strictEqual(r.ok, true)
 })
 
+// ---- memory-short.js: pickRecent / isOlderThan / defaultLifeState / mergeLifeState ----
+
+const {
+  pickRecent,
+  isOlderThan,
+  defaultLifeState,
+  mergeLifeState,
+} = require('./memory-short')
+
+// --- pickRecent ---
+
+test('pickRecent: empty array → []', () => {
+  assert.deepStrictEqual(pickRecent([], 5), [])
+})
+
+test('pickRecent: null → []', () => {
+  assert.deepStrictEqual(pickRecent(null, 5), [])
+})
+
+test('pickRecent: sorts by ts descending', () => {
+  const events = [
+    { ts: new Date(1000), id: 1 },
+    { ts: new Date(3000), id: 3 },
+    { ts: new Date(2000), id: 2 },
+  ]
+  const result = pickRecent(events, 3)
+  assert.deepStrictEqual(result.map((e) => e.id), [3, 2, 1])
+})
+
+test('pickRecent: respects n limit', () => {
+  const events = [
+    { ts: new Date(1000), id: 1 },
+    { ts: new Date(2000), id: 2 },
+    { ts: new Date(3000), id: 3 },
+  ]
+  const result = pickRecent(events, 2)
+  assert.strictEqual(result.length, 2)
+  assert.deepStrictEqual(result.map((e) => e.id), [3, 2])
+})
+
+test('pickRecent: n > length → returns all', () => {
+  const events = [
+    { ts: new Date(1000), id: 1 },
+    { ts: new Date(2000), id: 2 },
+  ]
+  const result = pickRecent(events, 10)
+  assert.strictEqual(result.length, 2)
+})
+
+test('pickRecent: n=0 → []', () => {
+  const events = [{ ts: new Date(1000), id: 1 }]
+  const result = pickRecent(events, 0)
+  assert.deepStrictEqual(result, [])
+})
+
+test('pickRecent: n=null → returns all', () => {
+  const events = [
+    { ts: new Date(1000), id: 1 },
+    { ts: new Date(2000), id: 2 },
+  ]
+  const result = pickRecent(events, null)
+  assert.strictEqual(result.length, 2)
+})
+
+test('pickRecent: equal-ts events preserve original order (stable)', () => {
+  const ts = new Date(5000)
+  const events = [
+    { ts, id: 'a' },
+    { ts, id: 'b' },
+    { ts, id: 'c' },
+  ]
+  const result = pickRecent(events, 3)
+  // All same ts, so original order a→b→c must be preserved
+  assert.deepStrictEqual(result.map((e) => e.id), ['a', 'b', 'c'])
+})
+
+test('pickRecent: ts as number also works', () => {
+  const events = [
+    { ts: 1000, id: 1 },
+    { ts: 3000, id: 3 },
+    { ts: 2000, id: 2 },
+  ]
+  const result = pickRecent(events, 3)
+  assert.deepStrictEqual(result.map((e) => e.id), [3, 2, 1])
+})
+
+test('pickRecent: does not mutate input array', () => {
+  const events = [
+    { ts: new Date(1000), id: 1 },
+    { ts: new Date(3000), id: 3 },
+  ]
+  const original = events.slice()
+  pickRecent(events, 2)
+  assert.deepStrictEqual(events, original)
+})
+
+// --- isOlderThan ---
+
+test('isOlderThan: ts strictly before cutoff → true', () => {
+  assert.strictEqual(isOlderThan({ ts: new Date(999) }, 1000), true)
+})
+
+test('isOlderThan: ts exactly equal to cutoff → false (not strictly older)', () => {
+  assert.strictEqual(isOlderThan({ ts: new Date(1000) }, 1000), false)
+})
+
+test('isOlderThan: ts after cutoff → false', () => {
+  assert.strictEqual(isOlderThan({ ts: new Date(2000) }, 1000), false)
+})
+
+test('isOlderThan: ts as number works', () => {
+  assert.strictEqual(isOlderThan({ ts: 500 }, 1000), true)
+  assert.strictEqual(isOlderThan({ ts: 1500 }, 1000), false)
+})
+
+test('isOlderThan: ts=0 is older than any positive cutoff', () => {
+  assert.strictEqual(isOlderThan({ ts: 0 }, 1), true)
+})
+
+// --- defaultLifeState ---
+
+test('defaultLifeState: returns object with correct presetId', () => {
+  const state = defaultLifeState('higekiri')
+  assert.strictEqual(state.presetId, 'higekiri')
+})
+
+test('defaultLifeState: open_threads is empty array', () => {
+  const state = defaultLifeState('higekiri')
+  assert.ok(Array.isArray(state.open_threads))
+  assert.strictEqual(state.open_threads.length, 0)
+})
+
+test('defaultLifeState: recent_event_ids is empty array', () => {
+  const state = defaultLifeState('higekiri')
+  assert.ok(Array.isArray(state.recent_event_ids))
+  assert.strictEqual(state.recent_event_ids.length, 0)
+})
+
+test('defaultLifeState: has mood field set to neutral', () => {
+  const state = defaultLifeState('higekiri')
+  assert.strictEqual(state.mood, 'neutral')
+})
+
+test('defaultLifeState: has §5.2 required fields', () => {
+  const state = defaultLifeState('test')
+  const fields = ['presetId', 'location', 'current_activity', 'mood', 'open_threads', 'recent_event_ids', 'updatedAt']
+  for (const f of fields) {
+    assert.ok(Object.prototype.hasOwnProperty.call(state, f), 'missing field: ' + f)
+  }
+})
+
+test('defaultLifeState: different calls return independent objects', () => {
+  const a = defaultLifeState('a')
+  const b = defaultLifeState('b')
+  a.open_threads.push({ id: 'x' })
+  assert.strictEqual(b.open_threads.length, 0)
+})
+
+// --- mergeLifeState ---
+
+test('mergeLifeState: patch overrides scalar fields', () => {
+  const prev = defaultLifeState('p1')
+  const patch = { location: '练习场', mood: '专注' }
+  const result = mergeLifeState(prev, patch)
+  assert.strictEqual(result.location, '练习场')
+  assert.strictEqual(result.mood, '专注')
+})
+
+test('mergeLifeState: absent scalar in patch → prev value preserved', () => {
+  const prev = Object.assign(defaultLifeState('p1'), { location: '主屋' })
+  const patch = { mood: '疲惫' }
+  const result = mergeLifeState(prev, patch)
+  assert.strictEqual(result.location, '主屋')
+})
+
+test('mergeLifeState: open_threads replaced when present in patch', () => {
+  const prev = Object.assign(defaultLifeState('p1'), {
+    open_threads: [{ id: 'old', desc: '旧线索' }],
+  })
+  const patch = { open_threads: [{ id: 'new', desc: '新线索' }] }
+  const result = mergeLifeState(prev, patch)
+  assert.strictEqual(result.open_threads.length, 1)
+  assert.strictEqual(result.open_threads[0].id, 'new')
+})
+
+test('mergeLifeState: open_threads replaced with empty array when patch specifies []', () => {
+  const prev = Object.assign(defaultLifeState('p1'), {
+    open_threads: [{ id: 'x' }],
+  })
+  const patch = { open_threads: [] }
+  const result = mergeLifeState(prev, patch)
+  assert.deepStrictEqual(result.open_threads, [])
+})
+
+test('mergeLifeState: open_threads preserved from prev when absent in patch', () => {
+  const thread = { id: 'keep', desc: '保留' }
+  const prev = Object.assign(defaultLifeState('p1'), { open_threads: [thread] })
+  const patch = { mood: '开心' }
+  const result = mergeLifeState(prev, patch)
+  assert.strictEqual(result.open_threads.length, 1)
+  assert.strictEqual(result.open_threads[0].id, 'keep')
+})
+
+test('mergeLifeState: recent_event_ids replaced when present in patch', () => {
+  const prev = Object.assign(defaultLifeState('p1'), {
+    recent_event_ids: ['evt_1', 'evt_2'],
+  })
+  const patch = { recent_event_ids: ['evt_3'] }
+  const result = mergeLifeState(prev, patch)
+  assert.deepStrictEqual(result.recent_event_ids, ['evt_3'])
+})
+
+test('mergeLifeState: recent_event_ids preserved from prev when absent in patch', () => {
+  const prev = Object.assign(defaultLifeState('p1'), {
+    recent_event_ids: ['evt_1'],
+  })
+  const patch = { mood: '疲惫' }
+  const result = mergeLifeState(prev, patch)
+  assert.deepStrictEqual(result.recent_event_ids, ['evt_1'])
+})
+
+test('mergeLifeState: does not mutate prev', () => {
+  const prev = Object.assign(defaultLifeState('p1'), {
+    open_threads: [{ id: 'x' }],
+    mood: 'calm',
+  })
+  const prevCopy = JSON.parse(JSON.stringify(prev))
+  mergeLifeState(prev, { mood: 'anxious', open_threads: [] })
+  assert.deepStrictEqual(prev.open_threads, prevCopy.open_threads)
+  assert.strictEqual(prev.mood, prevCopy.mood)
+})
+
+test('mergeLifeState: does not mutate patch', () => {
+  const patch = { mood: 'happy', open_threads: [{ id: 'y' }] }
+  const patchMoodBefore = patch.mood
+  const patchThreadsBefore = patch.open_threads.length
+  mergeLifeState(defaultLifeState('p1'), patch)
+  assert.strictEqual(patch.mood, patchMoodBefore)
+  assert.strictEqual(patch.open_threads.length, patchThreadsBefore)
+})
+
+test('mergeLifeState: preserves presetId from prev when not in patch', () => {
+  const prev = defaultLifeState('higekiri')
+  const result = mergeLifeState(prev, { mood: 'happy' })
+  assert.strictEqual(result.presetId, 'higekiri')
+})
+
+test('mergeLifeState: patch can override presetId (no restriction)', () => {
+  const prev = defaultLifeState('a')
+  const result = mergeLifeState(prev, { presetId: 'b' })
+  assert.strictEqual(result.presetId, 'b')
+})
+
+test('mergeLifeState: accepts updatedAt from patch (caller sets it)', () => {
+  const ts = new Date(12345)
+  const result = mergeLifeState(defaultLifeState('p1'), { updatedAt: ts })
+  assert.strictEqual(result.updatedAt, ts)
+})
+
 async function main() {
   await runAsync('invoke: passes signal to model (empty msgs, no langchain needed)', async () => {
     let receivedOpts
