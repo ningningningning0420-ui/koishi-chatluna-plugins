@@ -453,6 +453,11 @@ function createPlanner(ctx, config, deps) {
   /**
    * Schedule 'block' type wake tasks for each block start that is in the future.
    *
+   * ⚠️ CONTRACT: NOT idempotent. Calling twice creates duplicate 'block' tasks
+   * that would each fire. The caller (e.g. the roll loop / replan in Task 9)
+   * MUST clear this preset's existing pending 'block' tasks before calling this
+   * (e.g. remove life_sim_task rows where {presetId, type:'block', status:'pending'}).
+   *
    * @param {string} presetId
    * @param {object} plan  Plan object with blocks array
    * @returns {Promise<void>}
