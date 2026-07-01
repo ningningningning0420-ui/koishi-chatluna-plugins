@@ -66,7 +66,8 @@ function registerTables(ctx) {
       lastChatId: { type: 'string', length: 255, nullable: true },
       updatedAt: { type: 'timestamp', nullable: false, initial: new Date() },
     },
-    { autoInc: true, primary: 'id', unique: [['presetId', 'otherKey']] }
+    // 去重按 (presetId,otherKey) 在写入时 upsert-by-query 保证（见 memory 任务），不用 DB 复合 unique
+    { autoInc: true, primary: 'id' }
   )
 
   // §5.2 life-state 状态对象（防漂移锚）
@@ -110,7 +111,8 @@ function registerTables(ctx) {
       blocks: { type: 'text', nullable: true }, // JSON array of {start,activity,location,source,assignedBy,status}
       generatedAt: { type: 'timestamp', nullable: false, initial: new Date() },
     },
-    { autoInc: true, primary: 'id', unique: [['presetId', 'day']] }
+    // 去重按 (presetId,day) 在写入时 upsert-by-query 保证（见 plan 任务），不用 DB 复合 unique
+    { autoInc: true, primary: 'id' }
   )
 
   // §5.3 被安排队列

@@ -10,8 +10,6 @@
 //   const m = await getModel(ctx, 'ollama/qwen2.5:7b')
 //   const text = await invoke(m, [{role:'system',content:'...'},{role:'user',content:'...'}])
 
-const { SystemMessage, HumanMessage, AIMessage } = require('@langchain/core/messages')
-
 // Split 'platform/model-name' → ['platform', 'model-name'].
 // If no slash, returns [full, ''].
 // Only the first slash is used as delimiter (model names may contain slashes).
@@ -23,8 +21,11 @@ function parseModelName(full) {
 
 // Convert {role, content}[] to LangChain message objects.
 // system → SystemMessage, assistant → AIMessage, everything else → HumanMessage.
+// @langchain/core is lazy-required here so that require('./model') stays dep-free
+// at import time (enables offline node test.js with zero external deps).
 function toLangchain(messages) {
   if (!messages || !messages.length) return []
+  const { SystemMessage, HumanMessage, AIMessage } = require('@langchain/core/messages')
   return messages.map((m) => {
     if (m.role === 'system') return new SystemMessage(m.content)
     if (m.role === 'assistant') return new AIMessage(m.content)
