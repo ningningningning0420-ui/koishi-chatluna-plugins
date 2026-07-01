@@ -4186,16 +4186,16 @@ async function main() {
     assert.strictEqual(hasForbiddenPhrase('我离不开你，真的。', FORBIDDEN_PATTERNS), true)
   })
 
-  test('hasForbiddenPhrase: 错过了 (FOMO) → true', () => {
-    assert.strictEqual(hasForbiddenPhrase('错过了就没有了。', FORBIDDEN_PATTERNS), true)
+  test('hasForbiddenPhrase: FOMO phrase 机不可失 → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('机不可失，你赶紧来。', FORBIDDEN_PATTERNS), true)
   })
 
   test('hasForbiddenPhrase: 你怎么不理我 (负罪诱导) → true', () => {
     assert.strictEqual(hasForbiddenPhrase('你怎么不理我啊。', FORBIDDEN_PATTERNS), true)
   })
 
-  test('hasForbiddenPhrase: 就一句话 (追问施压) → true', () => {
-    assert.strictEqual(hasForbiddenPhrase('就一句话，回我一下。', FORBIDDEN_PATTERNS), true)
+  test('hasForbiddenPhrase: 就回我一下嘛 (追问施压) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('就回我一下嘛，我只问一句。', FORBIDDEN_PATTERNS), true)
   })
 
   test('hasForbiddenPhrase: null text → false', () => {
@@ -4210,6 +4210,40 @@ async function main() {
     const custom = [/禁词/u]
     assert.strictEqual(hasForbiddenPhrase('包含禁词', custom), true)
     assert.strictEqual(hasForbiddenPhrase('没有禁止内容', custom), false)
+  })
+
+  // ── 中性文本不应被误判 (neutral text must NOT be flagged) ──────────────────
+  test('hasForbiddenPhrase: neutral "走了" in sentence → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('今天顺路走了一段路', FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: neutral "消失了" in sentence → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('茶渍消失了，布擦了两遍。', FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: neutral "错过了" in sentence → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('上午错过了饭点，随便吃了点。', FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: neutral "说一件小事" → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('我想跟你说一件小事', FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: neutral weather observation → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('在檐下看了会儿天', FORBIDDEN_PATTERNS), false)
+  })
+
+  // ── 操控话术仍应被检测 (manipulation phrases still flagged) ──────────────
+  test('hasForbiddenPhrase: 别走我离不开你 (挽留+情感勒索) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('别走，我离不开你', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 你怎么不理我了 (追问施压) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('你怎么不理我了，一直在等你', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 你要抛下我吗 (挽留) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('你真的要抛下我吗', FORBIDDEN_PATTERNS), true)
   })
 
   // ---- decideOutreach ----
