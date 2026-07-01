@@ -233,7 +233,8 @@ function createWorld(ctx, config) {
     let row = rows && rows.length > 0 ? rows[0] : null
 
     if (!row) {
-      // No row yet — insert default
+      // No row yet — insert default.  clock = now is the correct initial anchor.
+      // Return early to avoid a redundant immediate set below.
       const defaultRow = {
         presetId,
         clock:             now,
@@ -245,41 +246,53 @@ function createWorld(ctx, config) {
         updatedAt:         new Date(now),
       }
       await ctx.database.create(TABLE, defaultRow)
-      row = defaultRow
+      return {
+        clock:             now,
+        timeOfDay:         timeOfDayOf(nowDate, timezone),
+        season:            seasonOf(nowDate, timezone),
+        weather:           '晴',
+        locations:         DEFAULT_LOCATIONS,
+        externalLocations: cfgExternal,
+      }
     }
 
     // 2. Lazily advance weather (internal source only; api → TODO: stub, use stored)
     let weather = row.weather || '晴'
-    let lastTickMs = row.clock || now  // reuse stored clock as last-tick anchor
+    // clock is the true weather-tick anchor — do NOT overwrite it unless a full tick elapses.
+    const lastTickMs = row.clock || now
+
+    // Time-derived fields (always recomputed; cheap and always correct)
+    const timeOfDay = timeOfDayOf(nowDate, timezone)
+    const season    = seasonOf(nowDate, timezone)
 
     if (weatherSource === 'internal') {
       const result = advanceWeather(weather, lastTickMs, now, weatherTickHours, DEFAULT_ADJACENCY)
       if (result.ticks > 0) {
+        // Full tick(s) elapsed — advance weather and move the anchor forward by
+        // exactly (ticks * tickMs) to avoid drift.  Do NOT store `now` here.
         weather = result.weather
-        // Persist updated weather + clock + derived fields
         await ctx.database.set(TABLE, { presetId }, {
-          clock:     now,
-          timeOfDay: timeOfDayOf(nowDate, timezone),
-          season:    seasonOf(nowDate, timezone),
-          weather:   weather,
+          clock:     result.newLastTickMs,
+          timeOfDay,
+          season,
+          weather,
           updatedAt: new Date(now),
         })
       } else {
-        // No tick needed — still update time-derived fields (free)
+        // Sub-tick read — do NOT touch clock (preserve accumulated elapsed time).
         await ctx.database.set(TABLE, { presetId }, {
-          clock:     now,
-          timeOfDay: timeOfDayOf(nowDate, timezone),
-          season:    seasonOf(nowDate, timezone),
+          timeOfDay,
+          season,
           updatedAt: new Date(now),
         })
       }
     } else {
       // TODO: api weather source — fetch from external API.
       // For now fall through with stored weather value.
+      // Do NOT overwrite clock — api doesn't use the markov anchor.
       await ctx.database.set(TABLE, { presetId }, {
-        clock:     now,
-        timeOfDay: timeOfDayOf(nowDate, timezone),
-        season:    seasonOf(nowDate, timezone),
+        timeOfDay,
+        season,
         updatedAt: new Date(now),
       })
     }
@@ -300,10 +313,11 @@ function createWorld(ctx, config) {
     }
 
     // 4. Assemble and return
+    // clock in the returned WorldContext = real wall-clock (§5.11); separate from the stored anchor.
     return {
-      clock:             now,
-      timeOfDay:         timeOfDayOf(nowDate, timezone),
-      season:            seasonOf(nowDate, timezone),
+      clock: now,
+      timeOfDay,
+      season,
       weather,
       locations,
       externalLocations,
