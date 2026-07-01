@@ -105,6 +105,150 @@ test('extractText: undefined → empty string', () => {
 // Tests that pass {role,content} messages are omitted — they go through toLangchain
 // and would need @langchain/core. This matches the relay habit (thin LangChain glue untested offline).
 
+// ---- scheduler: ConcurrencyGuard + partitionPending (pure logic) ----
+
+const { createConcurrencyGuard, partitionPending } = require('./scheduler')
+
+// ConcurrencyGuard
+
+test('ConcurrencyGuard: acquire free preset → true', () => {
+  const guard = createConcurrencyGuard()
+  assert.strictEqual(guard.acquire('p1', 'roll'), true)
+})
+
+test('ConcurrencyGuard: acquire busy preset (same kind) → false', () => {
+  const guard = createConcurrencyGuard()
+  guard.acquire('p1', 'roll')
+  assert.strictEqual(guard.acquire('p1', 'roll'), false)
+})
+
+test('ConcurrencyGuard: acquire busy preset (different kind) → false', () => {
+  const guard = createConcurrencyGuard()
+  guard.acquire('p1', 'roll')
+  assert.strictEqual(guard.acquire('p1', 'withuser'), false)
+})
+
+test('ConcurrencyGuard: isBusy reflects state', () => {
+  const guard = createConcurrencyGuard()
+  assert.strictEqual(guard.isBusy('p1'), false)
+  guard.acquire('p1', 'roll')
+  assert.strictEqual(guard.isBusy('p1'), true)
+})
+
+test('ConcurrencyGuard: current returns the active kind', () => {
+  const guard = createConcurrencyGuard()
+  assert.strictEqual(guard.current('p1'), null)
+  guard.acquire('p1', 'peerchat')
+  assert.strictEqual(guard.current('p1'), 'peerchat')
+})
+
+test('ConcurrencyGuard: release → acquire succeeds again', () => {
+  const guard = createConcurrencyGuard()
+  guard.acquire('p1', 'roll')
+  guard.release('p1')
+  assert.strictEqual(guard.acquire('p1', 'withuser'), true)
+  assert.strictEqual(guard.current('p1'), 'withuser')
+})
+
+test('ConcurrencyGuard: distinct presets are independent', () => {
+  const guard = createConcurrencyGuard()
+  guard.acquire('p1', 'roll')
+  // p2 should be unaffected
+  assert.strictEqual(guard.isBusy('p2'), false)
+  assert.strictEqual(guard.acquire('p2', 'roll'), true)
+  // p1 still busy
+  assert.strictEqual(guard.acquire('p1', 'withuser'), false)
+})
+
+test('ConcurrencyGuard: release noop on free preset (no throw)', () => {
+  const guard = createConcurrencyGuard()
+  // should not throw
+  guard.release('unknown')
+  assert.strictEqual(guard.isBusy('unknown'), false)
+})
+
+// partitionPending
+
+test('partitionPending: old task (beyond grace) → dropIds', () => {
+  const now = 1000000
+  const graceMs = 60000
+  const tasks = [
+    { id: 1, presetId: 'p1', fireAt: new Date(now - graceMs - 1), type: 'roll' }
+  ]
+  const result = partitionPending(tasks, now, graceMs)
+  assert.deepStrictEqual(result.dropIds, [1])
+  assert.deepStrictEqual(result.runIds, [])
+  assert.strictEqual(result.futureTasks.length, 0)
+})
+
+test('partitionPending: slightly overdue (within grace) → runIds', () => {
+  const now = 1000000
+  const graceMs = 60000
+  const tasks = [
+    { id: 2, presetId: 'p1', fireAt: new Date(now - 1000), type: 'roll' }
+  ]
+  const result = partitionPending(tasks, now, graceMs)
+  assert.deepStrictEqual(result.runIds, [2])
+  assert.deepStrictEqual(result.dropIds, [])
+  assert.strictEqual(result.futureTasks.length, 0)
+})
+
+test('partitionPending: exactly at now (within grace) → runIds', () => {
+  const now = 1000000
+  const graceMs = 60000
+  const tasks = [
+    { id: 3, presetId: 'p1', fireAt: new Date(now), type: 'roll' }
+  ]
+  const result = partitionPending(tasks, now, graceMs)
+  assert.deepStrictEqual(result.runIds, [3])
+  assert.deepStrictEqual(result.dropIds, [])
+  assert.strictEqual(result.futureTasks.length, 0)
+})
+
+test('partitionPending: future task → futureTasks', () => {
+  const now = 1000000
+  const graceMs = 60000
+  const task = { id: 4, presetId: 'p1', fireAt: new Date(now + 5000), type: 'roll' }
+  const result = partitionPending([task], now, graceMs)
+  assert.strictEqual(result.futureTasks.length, 1)
+  assert.strictEqual(result.futureTasks[0], task)
+  assert.deepStrictEqual(result.runIds, [])
+  assert.deepStrictEqual(result.dropIds, [])
+})
+
+test('partitionPending: boundary exactly at grace edge → dropIds', () => {
+  const now = 1000000
+  const graceMs = 60000
+  // fireAt = now - graceMs exactly: condition is fireAt <= now - graceMs → drop
+  const tasks = [
+    { id: 5, presetId: 'p1', fireAt: new Date(now - graceMs), type: 'roll' }
+  ]
+  const result = partitionPending(tasks, now, graceMs)
+  assert.deepStrictEqual(result.dropIds, [5])
+})
+
+test('partitionPending: mixed batch partitions correctly', () => {
+  const now = 1000000
+  const graceMs = 60000
+  const tasks = [
+    { id: 10, presetId: 'p1', fireAt: new Date(now - graceMs - 1), type: 'roll' },   // drop
+    { id: 11, presetId: 'p1', fireAt: new Date(now - 1000), type: 'block' },          // run
+    { id: 12, presetId: 'p2', fireAt: new Date(now + 10000), type: 'consolidate' },   // future
+  ]
+  const result = partitionPending(tasks, now, graceMs)
+  assert.deepStrictEqual(result.dropIds, [10])
+  assert.deepStrictEqual(result.runIds, [11])
+  assert.strictEqual(result.futureTasks.length, 1)
+  assert.strictEqual(result.futureTasks[0].id, 12)
+})
+
+test('partitionPending: empty input → all empty', () => {
+  const result = partitionPending([], Date.now(), 60000)
+  assert.deepStrictEqual(result.dropIds, [])
+  assert.deepStrictEqual(result.runIds, [])
+  assert.strictEqual(result.futureTasks.length, 0)
+})
+
 async function main() {
   await runAsync('invoke: passes signal to model (empty msgs, no langchain needed)', async () => {
     let receivedOpts
