@@ -3739,6 +3739,285 @@ async function main() {
     assert.strictEqual(typeof registeredHandlers.block, 'function', 'block handler is function')
   })
 
+  // ---------------------------------------------------------------------------
+  // Task 10: thought.js — ThoughtBuffer（心事簿）
+  // ---------------------------------------------------------------------------
+
+  const { filterRecallable, applyRevise, createThoughtBuffer } = require('./thought')
+
+  // ---- filterRecallable ----
+
+  test('filterRecallable: returns only pending thoughts matching target', () => {
+    const thoughts = [
+      { id: 1, status: 'pending',  target: '审神者' },
+      { id: 2, status: 'surfaced', target: '审神者' },
+      { id: 3, status: 'pending',  target: 'higekiri' },
+      { id: 4, status: 'dropped',  target: '审神者' },
+      { id: 5, status: 'pending',  target: '审神者' },
+      { id: 6, status: 'merged',   target: '审神者' },
+    ]
+    const result = filterRecallable(thoughts, '审神者')
+    assert.strictEqual(result.length, 2)
+    assert.strictEqual(result[0].id, 1)
+    assert.strictEqual(result[1].id, 5)
+  })
+
+  test('filterRecallable: empty array returns []', () => {
+    assert.deepStrictEqual(filterRecallable([], '审神者'), [])
+  })
+
+  test('filterRecallable: null/undefined input returns []', () => {
+    assert.deepStrictEqual(filterRecallable(null, '审神者'), [])
+    assert.deepStrictEqual(filterRecallable(undefined, '审神者'), [])
+  })
+
+  test('filterRecallable: no matching target returns []', () => {
+    const thoughts = [
+      { id: 1, status: 'pending', target: 'higekiri' },
+      { id: 2, status: 'pending', target: 'self' },
+    ]
+    assert.deepStrictEqual(filterRecallable(thoughts, '审神者'), [])
+  })
+
+  test('filterRecallable: dropped/surfaced/merged are excluded', () => {
+    const thoughts = [
+      { id: 1, status: 'surfaced', target: '审神者' },
+      { id: 2, status: 'dropped',  target: '审神者' },
+      { id: 3, status: 'merged',   target: '审神者' },
+    ]
+    assert.deepStrictEqual(filterRecallable(thoughts, '审神者'), [])
+  })
+
+  test('filterRecallable: self target only matched when caller passes self', () => {
+    const thoughts = [
+      { id: 1, status: 'pending', target: 'self' },
+      { id: 2, status: 'pending', target: '审神者' },
+    ]
+    const resultSelf = filterRecallable(thoughts, 'self')
+    assert.strictEqual(resultSelf.length, 1)
+    assert.strictEqual(resultSelf[0].id, 1)
+    const resultSanae = filterRecallable(thoughts, '审神者')
+    assert.strictEqual(resultSanae.length, 1)
+    assert.strictEqual(resultSanae[0].id, 2)
+  })
+
+  // ---- applyRevise: update ----
+
+  test('applyRevise: update merges content field without changing status', () => {
+    const original = { id: 1, content: 'old', urgency: 'low', status: 'pending', relatedThreadId: null }
+    const result = applyRevise(original, { type: 'update', content: 'new content' })
+    assert.strictEqual(result.content, 'new content')
+    assert.strictEqual(result.status, 'pending')
+    assert.strictEqual(result.urgency, 'low')
+  })
+
+  test('applyRevise: update merges urgency field without changing status', () => {
+    const original = { id: 1, content: 'text', urgency: 'low', status: 'pending', relatedThreadId: null }
+    const result = applyRevise(original, { type: 'update', urgency: 'high' })
+    assert.strictEqual(result.urgency, 'high')
+    assert.strictEqual(result.status, 'pending')
+    assert.strictEqual(result.content, 'text')
+  })
+
+  test('applyRevise: update merges relatedThreadId without changing status', () => {
+    const original = { id: 1, content: 'text', urgency: 'low', status: 'pending', relatedThreadId: null }
+    const result = applyRevise(original, { type: 'update', relatedThreadId: 'thread-abc' })
+    assert.strictEqual(result.relatedThreadId, 'thread-abc')
+    assert.strictEqual(result.status, 'pending')
+  })
+
+  test('applyRevise: update with multiple fields merges all', () => {
+    const original = { id: 1, content: 'old', urgency: 'low', status: 'pending', relatedThreadId: null }
+    const result = applyRevise(original, { type: 'update', content: 'new', urgency: 'medium', relatedThreadId: 'tid' })
+    assert.strictEqual(result.content, 'new')
+    assert.strictEqual(result.urgency, 'medium')
+    assert.strictEqual(result.relatedThreadId, 'tid')
+    assert.strictEqual(result.status, 'pending')
+  })
+
+  test('applyRevise: update does not mutate input', () => {
+    const original = { id: 1, content: 'old', urgency: 'low', status: 'pending', relatedThreadId: null }
+    applyRevise(original, { type: 'update', content: 'new' })
+    assert.strictEqual(original.content, 'old')
+  })
+
+  // ---- applyRevise: drop ----
+
+  test('applyRevise: drop sets status to dropped', () => {
+    const original = { id: 1, content: 'text', status: 'pending' }
+    const result = applyRevise(original, { type: 'drop' })
+    assert.strictEqual(result.status, 'dropped')
+  })
+
+  test('applyRevise: drop does not mutate input', () => {
+    const original = { id: 1, content: 'text', status: 'pending' }
+    applyRevise(original, { type: 'drop' })
+    assert.strictEqual(original.status, 'pending')
+  })
+
+  test('applyRevise: drop preserves other fields', () => {
+    const original = { id: 1, content: 'text', urgency: 'low', status: 'pending', relatedThreadId: 'tid' }
+    const result = applyRevise(original, { type: 'drop' })
+    assert.strictEqual(result.content, 'text')
+    assert.strictEqual(result.urgency, 'low')
+    assert.strictEqual(result.relatedThreadId, 'tid')
+    assert.strictEqual(result.id, 1)
+  })
+
+  // ---- applyRevise: merge ----
+
+  test('applyRevise: merge sets status to merged', () => {
+    const original = { id: 1, content: 'text', status: 'pending' }
+    const result = applyRevise(original, { type: 'merge' })
+    assert.strictEqual(result.status, 'merged')
+  })
+
+  test('applyRevise: merge does not mutate input', () => {
+    const original = { id: 1, content: 'text', status: 'pending' }
+    applyRevise(original, { type: 'merge' })
+    assert.strictEqual(original.status, 'pending')
+  })
+
+  test('applyRevise: merge preserves other fields', () => {
+    const original = { id: 2, content: 'abc', urgency: 'medium', status: 'pending', relatedThreadId: null }
+    const result = applyRevise(original, { type: 'merge' })
+    assert.strictEqual(result.content, 'abc')
+    assert.strictEqual(result.urgency, 'medium')
+    assert.strictEqual(result.id, 2)
+  })
+
+  // ---- applyRevise: error cases ----
+
+  test('applyRevise: unknown op type throws', () => {
+    const original = { id: 1, status: 'pending' }
+    assert.throws(() => applyRevise(original, { type: 'unknown' }), /Unknown op type/)
+  })
+
+  // ---- createThoughtBuffer glue (fake-ctx) ----
+
+  await runAsync('createThoughtBuffer: store inserts pending thought with explicit createdAt', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+    const row = await tb.store({ presetId: 'higekiri', content: '想告诉审神者今天的樱花', target: '审神者', urgency: 'low' })
+
+    assert.strictEqual(row.status, 'pending')
+    assert.ok(row.createdAt instanceof Date, 'createdAt should be a Date')
+    assert.strictEqual(row.revisedAt, null)
+
+    const dbRows = ctx.database._store['life_sim_thought']
+    assert.ok(dbRows && dbRows.length === 1)
+    assert.strictEqual(dbRows[0].content, '想告诉审神者今天的樱花')
+    assert.strictEqual(dbRows[0].target, '审神者')
+    assert.strictEqual(dbRows[0].status, 'pending')
+    assert.ok(dbRows[0].createdAt instanceof Date)
+  })
+
+  await runAsync('createThoughtBuffer: recall returns pending thoughts matching target', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+
+    await tb.store({ presetId: 'higekiri', content: 'thought A', target: '审神者', urgency: 'low' })
+    await tb.store({ presetId: 'higekiri', content: 'thought B', target: 'hizamaru',  urgency: 'low' })
+    await tb.store({ presetId: 'higekiri', content: 'thought C', target: '审神者', urgency: 'low' })
+
+    const result = await tb.recall('higekiri', '审神者')
+    assert.strictEqual(result.length, 2)
+    assert.ok(result.every((t) => t.target === '审神者'))
+    assert.ok(result.every((t) => t.status === 'pending'))
+  })
+
+  await runAsync('createThoughtBuffer: recall excludes non-pending thoughts', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+
+    await tb.store({ presetId: 'higekiri', content: 'thought A', target: '审神者', urgency: 'low' })
+    // Manually mark it surfaced in the store
+    const rows = ctx.database._store['life_sim_thought']
+    rows[0].status = 'surfaced'
+
+    const result = await tb.recall('higekiri', '审神者')
+    assert.strictEqual(result.length, 0)
+  })
+
+  await runAsync('createThoughtBuffer: revise update changes content and sets revisedAt', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+
+    await tb.store({ presetId: 'higekiri', content: '原来的内容', target: '审神者', urgency: 'low' })
+    const id = ctx.database._store['life_sim_thought'][0].id
+
+    const revised = await tb.revise(id, { type: 'update', content: '更新后的内容' })
+
+    assert.strictEqual(revised.content, '更新后的内容')
+    assert.strictEqual(revised.status, 'pending')
+    assert.ok(revised.revisedAt instanceof Date, 'revisedAt should be a Date after revise')
+
+    // DB should be updated too
+    const dbRow = ctx.database._store['life_sim_thought'][0]
+    assert.strictEqual(dbRow.content, '更新后的内容')
+    assert.ok(dbRow.revisedAt instanceof Date)
+  })
+
+  await runAsync('createThoughtBuffer: revise drop sets status to dropped', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+
+    await tb.store({ presetId: 'higekiri', content: 'thought', target: '审神者', urgency: 'low' })
+    const id = ctx.database._store['life_sim_thought'][0].id
+
+    const revised = await tb.revise(id, { type: 'drop' })
+    assert.strictEqual(revised.status, 'dropped')
+
+    const dbRow = ctx.database._store['life_sim_thought'][0]
+    assert.strictEqual(dbRow.status, 'dropped')
+    assert.ok(dbRow.revisedAt instanceof Date)
+  })
+
+  await runAsync('createThoughtBuffer: markSurfaced sets status to surfaced', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+
+    await tb.store({ presetId: 'higekiri', content: '对了想跟你说一件事', target: '审神者', urgency: 'low' })
+    const id = ctx.database._store['life_sim_thought'][0].id
+
+    await tb.markSurfaced(id)
+
+    const dbRow = ctx.database._store['life_sim_thought'][0]
+    assert.strictEqual(dbRow.status, 'surfaced')
+    assert.ok(dbRow.revisedAt instanceof Date)
+  })
+
+  await runAsync('createThoughtBuffer: mergeThoughts marks sources merged and creates new pending', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+
+    await tb.store({ presetId: 'higekiri', content: 'thought A', target: '审神者', urgency: 'low' })
+    await tb.store({ presetId: 'higekiri', content: 'thought B', target: '审神者', urgency: 'low' })
+    const rows = ctx.database._store['life_sim_thought']
+    const id1 = rows[0].id
+    const id2 = rows[1].id
+
+    const merged = await tb.mergeThoughts([id1, id2], '合并后：今天的樱花和明天的练习')
+
+    // Sources should be marked merged
+    assert.strictEqual(rows[0].status, 'merged')
+    assert.strictEqual(rows[1].status, 'merged')
+
+    // New thought should be pending
+    assert.strictEqual(merged.status, 'pending')
+    assert.strictEqual(merged.content, '合并后：今天的樱花和明天的练习')
+    assert.strictEqual(merged.origin, 'merge')
+    assert.ok(merged.createdAt instanceof Date)
+
+    // Total 3 rows (2 originals + 1 merged)
+    assert.strictEqual(rows.length, 3)
+
+    // recall should return only the new merged thought
+    const recallable = await tb.recall('higekiri', '审神者')
+    assert.strictEqual(recallable.length, 1)
+    assert.strictEqual(recallable[0].content, '合并后：今天的樱花和明天的练习')
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }
