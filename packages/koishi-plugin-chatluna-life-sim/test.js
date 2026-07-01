@@ -4029,6 +4029,514 @@ async function main() {
     assert.strictEqual(recallable[0].content, '合并后：今天的樱花和明天的练习')
   })
 
+  // ---------------------------------------------------------------------------
+  // Task 11: proactive.js — pure function tests + glue end-to-end
+  // ---------------------------------------------------------------------------
+
+  const {
+    inQuietHours,
+    passesDailyCap,
+    withinMinInterval,
+    hasForbiddenPhrase,
+    decideOutreach,
+    FORBIDDEN_PATTERNS,
+    createProactiveBridge,
+  } = require('./proactive')
+
+  // ---- helper: make a Date at a specific local hour in Asia/Shanghai (UTC+8) ----
+  function shanghaiDateH(localHour) {
+    // year 2026, month 7 (July), day 1, any day
+    const utcHour = localHour - 8
+    return new Date(Date.UTC(2026, 6, 1, utcHour, 30, 0, 0))
+  }
+
+  // ---- inQuietHours ----
+
+  // wrap-around window 22→8 (default)
+  test('inQuietHours: hour=23 inside wrap-around [22,8) → true', () => {
+    const d = shanghaiDateH(23)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 22, end: 8 }), true)
+  })
+
+  test('inQuietHours: hour=0 (midnight) inside wrap-around [22,8) → true', () => {
+    const d = shanghaiDateH(0)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 22, end: 8 }), true)
+  })
+
+  test('inQuietHours: hour=7 still inside [22,8) → true', () => {
+    const d = shanghaiDateH(7)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 22, end: 8 }), true)
+  })
+
+  test('inQuietHours: hour=8 is the END boundary — not quiet [22,8) → false', () => {
+    const d = shanghaiDateH(8)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 22, end: 8 }), false)
+  })
+
+  test('inQuietHours: hour=12 outside [22,8) → false', () => {
+    const d = shanghaiDateH(12)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 22, end: 8 }), false)
+  })
+
+  test('inQuietHours: hour=22 exactly at start [22,8) → true', () => {
+    const d = shanghaiDateH(22)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 22, end: 8 }), true)
+  })
+
+  // normal window (start < end) 8→22
+  test('inQuietHours: hour=10 inside normal window [8,22) → true', () => {
+    const d = shanghaiDateH(10)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 8, end: 22 }), true)
+  })
+
+  test('inQuietHours: hour=6 outside normal window [8,22) → false', () => {
+    const d = shanghaiDateH(6)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 8, end: 22 }), false)
+  })
+
+  test('inQuietHours: hour=23 outside normal window [8,22) → false', () => {
+    const d = shanghaiDateH(23)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 8, end: 22 }), false)
+  })
+
+  // edge: same start and end → never quiet
+  test('inQuietHours: start === end → false (zero-width, never quiet)', () => {
+    const d = shanghaiDateH(12)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', { start: 12, end: 12 }), false)
+  })
+
+  test('inQuietHours: null quietHours → false (no-op)', () => {
+    const d = shanghaiDateH(23)
+    assert.strictEqual(inQuietHours(d, 'Asia/Shanghai', null), false)
+  })
+
+  // ---- passesDailyCap ----
+
+  test('passesDailyCap: enabled=false → always true regardless of count', () => {
+    assert.strictEqual(passesDailyCap(999, 2, false), true)
+    assert.strictEqual(passesDailyCap(0, 0, false), true)
+  })
+
+  test('passesDailyCap: enabled=true, sentToday < cap → true', () => {
+    assert.strictEqual(passesDailyCap(1, 2, true), true)
+    assert.strictEqual(passesDailyCap(0, 2, true), true)
+  })
+
+  test('passesDailyCap: enabled=true, sentToday === cap → false (at cap = blocked)', () => {
+    assert.strictEqual(passesDailyCap(2, 2, true), false)
+  })
+
+  test('passesDailyCap: enabled=true, sentToday > cap → false', () => {
+    assert.strictEqual(passesDailyCap(5, 2, true), false)
+  })
+
+  test('passesDailyCap: cap=0, enabled=true → false (cap=0 means no sends allowed)', () => {
+    assert.strictEqual(passesDailyCap(0, 0, true), false)
+  })
+
+  // ---- withinMinInterval ----
+
+  test('withinMinInterval: lastSentMs=null → false (no prior send, not blocked)', () => {
+    assert.strictEqual(withinMinInterval(null, 1000000, 4), false)
+  })
+
+  test('withinMinInterval: lastSentMs=0 → false (treated as no prior send)', () => {
+    assert.strictEqual(withinMinInterval(0, 1000000, 4), false)
+  })
+
+  test('withinMinInterval: gap < minInterval → true (blocked)', () => {
+    const lastSentMs = 1000000
+    const nowMs = lastSentMs + 3 * 3600 * 1000  // 3 hours later, min is 4
+    assert.strictEqual(withinMinInterval(lastSentMs, nowMs, 4), true)
+  })
+
+  test('withinMinInterval: gap === minInterval → false (exactly at boundary, allowed)', () => {
+    const lastSentMs = 1000000
+    const nowMs = lastSentMs + 4 * 3600 * 1000  // exactly 4 hours
+    assert.strictEqual(withinMinInterval(lastSentMs, nowMs, 4), false)
+  })
+
+  test('withinMinInterval: gap > minInterval → false (enough time passed, allowed)', () => {
+    const lastSentMs = 1000000
+    const nowMs = lastSentMs + 5 * 3600 * 1000  // 5 hours
+    assert.strictEqual(withinMinInterval(lastSentMs, nowMs, 4), false)
+  })
+
+  test('withinMinInterval: minIntervalHours=0 → false (no interval configured, not blocked)', () => {
+    const lastSentMs = 1000000
+    const nowMs = lastSentMs + 1000  // 1 second later
+    assert.strictEqual(withinMinInterval(lastSentMs, nowMs, 0), false)
+  })
+
+  // ---- hasForbiddenPhrase ----
+
+  test('hasForbiddenPhrase: clean text → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('今天练习了，感觉不错。', FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: 别走 (挽留) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('等等，别走！', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 快点 (催促) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('你快点回来啊。', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 我离不开你 (情感勒索) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('我离不开你，真的。', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 错过了 (FOMO) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('错过了就没有了。', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 你怎么不理我 (负罪诱导) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('你怎么不理我啊。', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: 就一句话 (追问施压) → true', () => {
+    assert.strictEqual(hasForbiddenPhrase('就一句话，回我一下。', FORBIDDEN_PATTERNS), true)
+  })
+
+  test('hasForbiddenPhrase: null text → false', () => {
+    assert.strictEqual(hasForbiddenPhrase(null, FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: empty string → false', () => {
+    assert.strictEqual(hasForbiddenPhrase('', FORBIDDEN_PATTERNS), false)
+  })
+
+  test('hasForbiddenPhrase: custom patterns (no FORBIDDEN_PATTERNS) → uses provided list', () => {
+    const custom = [/禁词/u]
+    assert.strictEqual(hasForbiddenPhrase('包含禁词', custom), true)
+    assert.strictEqual(hasForbiddenPhrase('没有禁止内容', custom), false)
+  })
+
+  // ---- decideOutreach ----
+
+  // proactiveEnabled=false → always 'disabled'
+  test('decideOutreach: proactiveEnabled=false → disabled', () => {
+    const gates = { proactiveEnabled: false, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'disabled')
+  })
+
+  // decision=no → drop
+  test('decideOutreach: decision=no → drop', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'no' }, gates), 'drop')
+  })
+
+  // decision=later → park
+  test('decideOutreach: decision=later → park', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'later' }, gates), 'park')
+  })
+
+  // decision=now + quiet hours enabled + in quiet → block-quiet
+  test('decideOutreach: decision=now + quietHoursEnabled + isQuietHours → block-quiet', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: true, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'block-quiet')
+  })
+
+  // quiet hours disabled → skips quiet-hour check
+  test('decideOutreach: decision=now + quietHoursEnabled=false + isQuietHours=true → not blocked by quiet', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: true, quietHoursEnabled: false, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'send')
+  })
+
+  // over daily cap
+  test('decideOutreach: decision=now + dailyCapEnabled + !underDailyCap → block-cap', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: false, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'block-cap')
+  })
+
+  // daily cap disabled → skips cap check
+  test('decideOutreach: decision=now + dailyCapEnabled=false + !underDailyCap → not blocked by cap', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: false, dailyCapEnabled: false, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'send')
+  })
+
+  // within min interval
+  test('decideOutreach: decision=now + tooSoon=true → block-interval', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: true, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'block-interval')
+  })
+
+  // forbidden phrase
+  test('decideOutreach: decision=now + phraseBlocked + guardEnabled → block-phrase', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: true, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: '别走' }, gates), 'block-phrase')
+  })
+
+  // phrase blocked but guard disabled → sends
+  test('decideOutreach: decision=now + phraseBlocked + guardEnabled=false → send', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: true, forbiddenPhraseGuardEnabled: false }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: '别走' }, gates), 'send')
+  })
+
+  // clean path → send
+  test('decideOutreach: decision=now, all gates clear → send', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: '今天练了一会儿刀，感觉不错。' }, gates), 'send')
+  })
+
+  // null share → treated as decision=no → drop
+  test('decideOutreach: null share → drop', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: false, quietHoursEnabled: true, underDailyCap: true, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach(null, gates), 'drop')
+  })
+
+  // priority: quiet > cap > interval > phrase
+  test('decideOutreach: quiet+cap both blocked → quiet wins (checked first)', () => {
+    const gates = { proactiveEnabled: true, isQuietHours: true, quietHoursEnabled: true, underDailyCap: false, dailyCapEnabled: true, tooSoon: false, phraseBlocked: false, forbiddenPhraseGuardEnabled: true }
+    assert.strictEqual(decideOutreach({ decision: 'now', draft: 'hi' }, gates), 'block-quiet')
+  })
+
+  // ---- createProactiveBridge glue: end-to-end (fake model + fake transport) ----
+
+  await runAsync('createProactiveBridge: decision=no → nothing sent, nothing stored', async () => {
+    let sent = []
+    let stored = []
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      thoughtBuffer: { store: async (t) => stored.push(t) },
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'no', draft: 'test', thought: 'test', target: '审神者' }, Date.now())
+    assert.strictEqual(sent.length, 0)
+    assert.strictEqual(stored.length, 0)
+  })
+
+  await runAsync('createProactiveBridge: decision=later → stored in thoughtBuffer', async () => {
+    let stored = []
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+    }, {
+      thoughtBuffer: { store: async (t) => stored.push(t) },
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'later', draft: '', thought: '想说说今天的事', target: '审神者', origin: 'want_to_share', urgency: 'low' }, Date.now())
+    assert.strictEqual(stored.length, 1)
+    assert.strictEqual(stored[0].presetId, 'higekiri')
+    assert.strictEqual(stored[0].content, '想说说今天的事')
+    assert.strictEqual(stored[0].target, '审神者')
+  })
+
+  await runAsync('createProactiveBridge: decision=now, all gates clear → sends via sendDirect', async () => {
+    let sent = []
+    const nowMs = Date.UTC(2026, 6, 1, 14, 0, 0)  // 14:00 UTC, not in any quiet window
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '今天练了一下午。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.strictEqual(sent[0].pid, 'higekiri')
+    assert.strictEqual(sent[0].text, '今天练了一下午。')
+  })
+
+  await runAsync('createProactiveBridge: decision=now, quiet hours active → blocked, nothing sent', async () => {
+    let sent = []
+    // 23:00 UTC+8 = 15:00 UTC
+    const nowMs = Date.UTC(2026, 6, 1, 15, 0, 0)  // 23:00 Shanghai
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: true,
+      quietHours: { start: 22, end: 8 },
+      dailyCapEnabled: false,
+      timezone: 'Asia/Shanghai',
+      forbiddenPhraseGuard: false,
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '夜里也在想你。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 0, 'should not send during quiet hours')
+  })
+
+  await runAsync('createProactiveBridge: daily cap enforced — 2nd send blocked at cap=1', async () => {
+    let sent = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)  // 10:00 UTC (daytime UTC)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: true,
+      proactiveDailyCap: 1,
+      proactiveMinIntervalHours: 0,  // no interval restriction for this test
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+    })
+
+    const share = { decision: 'now', draft: '练习了。', target: '审神者' }
+    await bridge.maybeReachOut('higekiri', share, nowMs)
+    await bridge.maybeReachOut('higekiri', share, nowMs + 1000)
+
+    assert.strictEqual(sent.length, 1, 'only 1 send allowed per day at cap=1')
+  })
+
+  await runAsync('createProactiveBridge: forbidden phrase → blocked even with decision=now', async () => {
+    let sent = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: true,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '别走，我离不开你。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 0, 'forbidden phrase should block send')
+  })
+
+  await runAsync('createProactiveBridge: proactiveEnabled=false → skip entirely', async () => {
+    let sent = []
+    let stored = []
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: false,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      thoughtBuffer: { store: async (t) => stored.push(t) },
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: 'test' }, Date.now())
+    await bridge.maybeReachOut('higekiri', { decision: 'later', thought: 'test' }, Date.now())
+    assert.strictEqual(sent.length, 0)
+    assert.strictEqual(stored.length, 0)
+  })
+
+  await runAsync('createProactiveBridge: proactiveVia=relay uses sendViaRelay over sendDirect', async () => {
+    let relaySent = []
+    let directSent = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'relay',
+    }, {
+      sendViaRelay: async (pid, text) => relaySent.push({ pid, text }),
+      sendDirect:   async (pid, text) => directSent.push({ pid, text }),
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '通过relay发送' }, nowMs)
+    assert.strictEqual(relaySent.length, 1, 'should use relay transport')
+    assert.strictEqual(directSent.length, 0, 'should not use direct transport')
+  })
+
+  await runAsync('createProactiveBridge: maybeFollowUp, model says yes → sends draft', async () => {
+    let sent = []
+    let goLiveCalled = false
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const fakeModelResponse = JSON.stringify({ follow_up: true, draft: '还在吗？接着刚才的话头。' })
+
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+      rollModel: 'fake/model',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      getModel: async () => ({ invoke: async () => ({ content: fakeModelResponse }) }),
+      invoke: async (m, _msgs) => (await m.invoke()).content,
+      silenceState: (_pid) => ({ silenceMinutes: 8, followUpCount: 0 }),
+      presence: { goLive: (_pid) => { goLiveCalled = true } },
+    })
+
+    await bridge.maybeFollowUp('higekiri', nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.ok(sent[0].text.includes('还在吗'))
+    // After sending, goLive should NOT be called (we stay in LINGERING for possible re-arm)
+    assert.strictEqual(goLiveCalled, false)
+  })
+
+  await runAsync('createProactiveBridge: maybeFollowUp, model says no → goLive called, no send', async () => {
+    let sent = []
+    let goLiveCalled = false
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const fakeModelResponse = JSON.stringify({ follow_up: false, draft: '' })
+
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+      rollModel: 'fake/model',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      getModel: async () => ({ invoke: async () => ({ content: fakeModelResponse }) }),
+      invoke: async (m, _msgs) => (await m.invoke()).content,
+      silenceState: (_pid) => ({ silenceMinutes: 20, followUpCount: 2 }),
+      presence: { goLive: (_pid) => { goLiveCalled = true } },
+    })
+
+    await bridge.maybeFollowUp('higekiri', nowMs)
+    assert.strictEqual(sent.length, 0, 'no send when model says no')
+    assert.strictEqual(goLiveCalled, true, 'goLive should be called when not following up')
+  })
+
+  await runAsync('createProactiveBridge: maybeFollowUp, daily cap blocks even if model says yes', async () => {
+    let sent = []
+    let goLiveCalled = false
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const fakeModelResponse = JSON.stringify({ follow_up: true, draft: '还在吗？' })
+
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: true,
+      proactiveDailyCap: 0,  // cap=0 → always blocked
+      proactiveMinIntervalHours: 0,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+      rollModel: 'fake/model',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      getModel: async () => ({ invoke: async () => ({ content: fakeModelResponse }) }),
+      invoke: async (m, _msgs) => (await m.invoke()).content,
+      silenceState: (_pid) => ({ silenceMinutes: 5, followUpCount: 0 }),
+      presence: { goLive: (_pid) => { goLiveCalled = true } },
+    })
+
+    await bridge.maybeFollowUp('higekiri', nowMs)
+    assert.strictEqual(sent.length, 0, 'cap=0 should block follow-up send')
+    assert.strictEqual(goLiveCalled, true, 'goLive called after cap block')
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }
