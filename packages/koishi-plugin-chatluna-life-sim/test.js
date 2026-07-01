@@ -324,6 +324,287 @@ test('derivePresenceKey: isDirect falsy (0/empty/undefined) → group path', () 
   assert.strictEqual(derivePresenceKey(session), 'group:g1')
 })
 
+// ---- world-context.js: seasonOf / timeOfDayOf / tickWeather / advanceWeather ----
+
+const { seasonOf, timeOfDayOf, tickWeather, advanceWeather, DEFAULT_ADJACENCY } = require('./world-context')
+
+// Helper: build a Date at a specific local clock reading inside Asia/Shanghai
+// by using the UTC offset (+8h = -28800000ms offset applied in reverse).
+// We want to test "what label does date X get in tz Y", so we just create Date
+// objects from specific UTC values that we know correspond to a given local time
+// in Asia/Shanghai (UTC+8: local = utc+8).
+function shanghaiDate(localHour, localMonth, localDay) {
+  // year 2024 for all tests (non-leap edge not needed here)
+  const year = 2024
+  // UTC hour = local hour - 8 (UTC+8)
+  const utcHour = localHour - 8
+  // This may yield negative hour; Date handles it correctly via UTC constructor
+  return new Date(Date.UTC(year, localMonth - 1, localDay, utcHour, 0, 0, 0))
+}
+
+// --- seasonOf ---
+
+test('seasonOf: March → 春', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 3, 15), 'Asia/Shanghai'), '春')
+})
+
+test('seasonOf: April → 春', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 4, 15), 'Asia/Shanghai'), '春')
+})
+
+test('seasonOf: May → 春', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 5, 31), 'Asia/Shanghai'), '春')
+})
+
+test('seasonOf: June → 夏', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 6, 1), 'Asia/Shanghai'), '夏')
+})
+
+test('seasonOf: July → 夏', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 7, 15), 'Asia/Shanghai'), '夏')
+})
+
+test('seasonOf: August → 夏', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 8, 31), 'Asia/Shanghai'), '夏')
+})
+
+test('seasonOf: September → 秋', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 9, 1), 'Asia/Shanghai'), '秋')
+})
+
+test('seasonOf: October → 秋', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 10, 15), 'Asia/Shanghai'), '秋')
+})
+
+test('seasonOf: November → 秋', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 11, 30), 'Asia/Shanghai'), '秋')
+})
+
+test('seasonOf: December → 冬', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 12, 1), 'Asia/Shanghai'), '冬')
+})
+
+test('seasonOf: January → 冬', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 1, 15), 'Asia/Shanghai'), '冬')
+})
+
+test('seasonOf: February → 冬', () => {
+  assert.strictEqual(seasonOf(shanghaiDate(12, 2, 28), 'Asia/Shanghai'), '冬')
+})
+
+// --- timeOfDayOf ---
+
+test('timeOfDayOf: hour=0 → 深夜', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(0, 6, 15), 'Asia/Shanghai'), '深夜')
+})
+
+test('timeOfDayOf: hour=3 → 深夜', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(3, 6, 15), 'Asia/Shanghai'), '深夜')
+})
+
+test('timeOfDayOf: hour=4 → 深夜', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(4, 6, 15), 'Asia/Shanghai'), '深夜')
+})
+
+test('timeOfDayOf: hour=5 → 清晨', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(5, 6, 15), 'Asia/Shanghai'), '清晨')
+})
+
+test('timeOfDayOf: hour=6 → 清晨', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(6, 6, 15), 'Asia/Shanghai'), '清晨')
+})
+
+test('timeOfDayOf: hour=7 → 上午', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(7, 6, 15), 'Asia/Shanghai'), '上午')
+})
+
+test('timeOfDayOf: hour=10 → 上午', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(10, 6, 15), 'Asia/Shanghai'), '上午')
+})
+
+test('timeOfDayOf: hour=11 → 上午', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(11, 6, 15), 'Asia/Shanghai'), '上午')
+})
+
+test('timeOfDayOf: hour=12 → 午后', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(12, 6, 15), 'Asia/Shanghai'), '午后')
+})
+
+test('timeOfDayOf: hour=16 → 午后', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(16, 6, 15), 'Asia/Shanghai'), '午后')
+})
+
+test('timeOfDayOf: hour=17 → 黄昏', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(17, 6, 15), 'Asia/Shanghai'), '黄昏')
+})
+
+test('timeOfDayOf: hour=18 → 黄昏', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(18, 6, 15), 'Asia/Shanghai'), '黄昏')
+})
+
+test('timeOfDayOf: hour=19 → 夜', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(19, 6, 15), 'Asia/Shanghai'), '夜')
+})
+
+test('timeOfDayOf: hour=22 → 夜', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(22, 6, 15), 'Asia/Shanghai'), '夜')
+})
+
+test('timeOfDayOf: hour=23 → 深夜', () => {
+  assert.strictEqual(timeOfDayOf(shanghaiDate(23, 6, 15), 'Asia/Shanghai'), '深夜')
+})
+
+// --- tickWeather: adjacency enforcement (§5.4c 禁跳变) ---
+
+test('tickWeather: 晴 pickIndex=0 → 晴 (self-loop)', () => {
+  assert.strictEqual(tickWeather('晴', DEFAULT_ADJACENCY, 0), '晴')
+})
+
+test('tickWeather: 晴 pickIndex=1 → 多云 (only adjacent)', () => {
+  assert.strictEqual(tickWeather('晴', DEFAULT_ADJACENCY, 1), '多云')
+})
+
+test('tickWeather: 晴 never jumps to 雨', () => {
+  // 晴 neighbours = ['晴','多云'] — neither is 雨/雪/阴
+  const neighbours = DEFAULT_ADJACENCY['晴']
+  assert.ok(!neighbours.includes('雨'), '晴 should not have 雨 as neighbour')
+  assert.ok(!neighbours.includes('雪'), '晴 should not have 雪 as neighbour')
+  assert.ok(!neighbours.includes('阴'), '晴 should not have 阴 as neighbour')
+})
+
+test('tickWeather: 多云 can reach 晴 阴 多云', () => {
+  const neighbours = DEFAULT_ADJACENCY['多云']
+  assert.ok(neighbours.includes('晴'))
+  assert.ok(neighbours.includes('阴'))
+  assert.ok(neighbours.includes('多云'))
+})
+
+test('tickWeather: 多云 cannot jump to 雨 or 雪', () => {
+  const neighbours = DEFAULT_ADJACENCY['多云']
+  assert.ok(!neighbours.includes('雨'), '多云 should not jump to 雨')
+  assert.ok(!neighbours.includes('雪'), '多云 should not jump to 雪')
+})
+
+test('tickWeather: 阴 can reach 多云 雨 雪 阴', () => {
+  const neighbours = DEFAULT_ADJACENCY['阴']
+  assert.ok(neighbours.includes('多云'))
+  assert.ok(neighbours.includes('雨'))
+  assert.ok(neighbours.includes('雪'))
+  assert.ok(neighbours.includes('阴'))
+})
+
+test('tickWeather: 阴 cannot jump to 晴', () => {
+  const neighbours = DEFAULT_ADJACENCY['阴']
+  assert.ok(!neighbours.includes('晴'), '阴 should not jump to 晴')
+})
+
+test('tickWeather: 雨 pickIndex=0 → 阴', () => {
+  assert.strictEqual(tickWeather('雨', DEFAULT_ADJACENCY, 0), '阴')
+})
+
+test('tickWeather: 雨 pickIndex=1 → 雨 (self-loop)', () => {
+  assert.strictEqual(tickWeather('雨', DEFAULT_ADJACENCY, 1), '雨')
+})
+
+test('tickWeather: 雨 cannot jump to 晴 or 雪', () => {
+  const neighbours = DEFAULT_ADJACENCY['雨']
+  assert.ok(!neighbours.includes('晴'), '雨 should not jump to 晴')
+  assert.ok(!neighbours.includes('雪'), '雨 should not jump to 雪')
+})
+
+test('tickWeather: 雪 pickIndex=0 → 阴', () => {
+  assert.strictEqual(tickWeather('雪', DEFAULT_ADJACENCY, 0), '阴')
+})
+
+test('tickWeather: 雪 pickIndex=1 → 雪 (self-loop)', () => {
+  assert.strictEqual(tickWeather('雪', DEFAULT_ADJACENCY, 1), '雪')
+})
+
+test('tickWeather: unknown state stays put', () => {
+  assert.strictEqual(tickWeather('暴风雪', DEFAULT_ADJACENCY), '暴风雪')
+})
+
+test('tickWeather: pickIndex wraps via mod (negative ok)', () => {
+  // pickIndex=-1 → mod 2 = 1 for 晴 neighbours=['晴','多云']
+  assert.strictEqual(tickWeather('晴', DEFAULT_ADJACENCY, -1), '多云')
+})
+
+// --- advanceWeather ---
+
+const TICK_H = 6
+const TICK_MS = TICK_H * 3600 * 1000
+
+test('advanceWeather: elapsed < tickHours → 0 ticks, weather unchanged', () => {
+  const base = 1000000000
+  const result = advanceWeather('晴', base, base + TICK_MS - 1, TICK_H, DEFAULT_ADJACENCY, 0)
+  assert.strictEqual(result.ticks, 0)
+  assert.strictEqual(result.weather, '晴')
+  assert.strictEqual(result.newLastTickMs, base)
+})
+
+test('advanceWeather: elapsed = exactly 1 tick → 1 tick', () => {
+  const base = 1000000000
+  const result = advanceWeather('晴', base, base + TICK_MS, TICK_H, DEFAULT_ADJACENCY, 1)
+  assert.strictEqual(result.ticks, 1)
+  assert.strictEqual(result.weather, '多云')   // 晴[1] = 多云
+  assert.strictEqual(result.newLastTickMs, base + TICK_MS)
+})
+
+test('advanceWeather: elapsed = 2 ticks, each step stays adjacent', () => {
+  const base = 1000000000
+  // pickIndex=1 each step:
+  //   step1: 晴 neighbours=['晴','多云'] → [1]='多云'
+  //   step2: 多云 neighbours=['晴','多云','阴'] → [1]='多云'
+  const result = advanceWeather('晴', base, base + 2 * TICK_MS, TICK_H, DEFAULT_ADJACENCY, 1)
+  assert.strictEqual(result.ticks, 2)
+  assert.strictEqual(result.weather, '多云')
+  assert.strictEqual(result.newLastTickMs, base + 2 * TICK_MS)
+})
+
+test('advanceWeather: elapsed = 2.9 ticks → 2 ticks (floor)', () => {
+  const base = 1000000000
+  const result = advanceWeather('晴', base, base + Math.floor(2.9 * TICK_MS), TICK_H, DEFAULT_ADJACENCY, 0)
+  assert.strictEqual(result.ticks, 2)
+  // pickIndex=0: 晴→晴→晴 (self-loop each step)
+  assert.strictEqual(result.weather, '晴')
+})
+
+test('advanceWeather: each intermediate step produces only adjacent states', () => {
+  // Run 5 steps from 多云, picking randomly but recording each step
+  const base = 1000000000
+  let weather = '多云'
+  let lastTick = base
+  for (let step = 0; step < 5; step++) {
+    const prevWeather = weather
+    const res = advanceWeather(weather, lastTick, lastTick + TICK_MS, TICK_H, DEFAULT_ADJACENCY)
+    assert.ok(
+      DEFAULT_ADJACENCY[prevWeather].includes(res.weather),
+      'step ' + step + ': ' + prevWeather + '→' + res.weather + ' must be adjacent'
+    )
+    weather = res.weather
+    lastTick = res.newLastTickMs
+  }
+})
+
+test('advanceWeather: newLastTickMs advances by exactly ticks*tickMs (no drift)', () => {
+  const base = 1000000000
+  const overshoot = base + 2 * TICK_MS + 999  // 2 full ticks + remainder
+  const result = advanceWeather('晴', base, overshoot, TICK_H, DEFAULT_ADJACENCY, 0)
+  assert.strictEqual(result.ticks, 2)
+  assert.strictEqual(result.newLastTickMs, base + 2 * TICK_MS)
+})
+
+test('advanceWeather: function pick receives neighbours array', () => {
+  const base = 1000000000
+  let sawNeighbours
+  const result = advanceWeather('晴', base, base + TICK_MS, TICK_H, DEFAULT_ADJACENCY, (neighbours) => {
+    sawNeighbours = neighbours
+    return neighbours[1]  // pick 多云
+  })
+  assert.deepStrictEqual(sawNeighbours, ['晴', '多云'])
+  assert.strictEqual(result.weather, '多云')
+})
+
 async function main() {
   await runAsync('invoke: passes signal to model (empty msgs, no langchain needed)', async () => {
     let receivedOpts
