@@ -1,0 +1,67 @@
+[
+  {
+    "type": "练习",
+    "conditions": {
+      "timeOfDay": ["清晨", "上午", "午后"],
+      "location": ["练习场", "庭院", "本丸·主屋"]
+    },
+    "weight": 3,
+    "comment": "日常剑练/体能训练"
+  },
+  {
+    "type": "檐下发呆",
+    "conditions": {
+      "timeOfDay": ["午后", "黄昏", "夜"]
+    },
+    "weight": 2,
+    "comment": "在檐下发呆、晒太阳、看天色"
+  },
+  {
+    "type": "夜巡",
+    "conditions": {
+      "timeOfDay": ["夜", "深夜"]
+    },
+    "weight": 2,
+    "comment": "夜间巡视本丸各处"
+  },
+  {
+    "type": "角色互动",
+    "conditions": {
+      "requiresOtherPresent": true
+    },
+    "weight": 4,
+    "comment": "与其他刀剑男士或审神者互动（需要他人在场）"
+  },
+  {
+    "type": "思绪",
+    "conditions": {},
+    "weight": 1,
+    "comment": "陷入回忆或思考，适合任意场合"
+  },
+  {
+    "type": "刀剑保养",
+    "conditions": {
+      "timeOfDay": ["清晨", "上午", "午后", "黄昏"]
+    },
+    "weight": 2,
+    "comment": "打磨、擦拭刀身"
+  },
+  {
+    "type": "外出采购",
+    "conditions": {
+      "timeOfDay": ["上午", "午后"],
+      "location": ["城下町", "近所"]
+    },
+    "weight": 2,
+    "comment": "前往城下町或近所购置所需物品（出本丸，需在 externalLocations 内）"
+  },
+  {
+    "type": "庭院漫步",
+    "conditions": {
+      "timeOfDay": ["清晨", "上午", "午后", "黄昏"],
+      "location": ["庭院", "本丸·主屋", "檐下"]
+    },
+    "weight": 2,
+    "comment": "在庭院或檐下散步、观赏季节景致"
+  }
+]

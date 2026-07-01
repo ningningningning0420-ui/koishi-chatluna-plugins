@@ -605,6 +605,407 @@ test('advanceWeather: function pick receives neighbours array', () => {
   assert.strictEqual(result.weather, '多云')
 })
 
+// ---- world-registry.js: matchContext / selectAvailable / sampleWeighted ----
+
+const {
+  matchContext,
+  selectAvailable,
+  sampleWeighted,
+  DEFAULT_ENTRIES: REGISTRY_DEFAULT_ENTRIES,
+} = require('./world-registry')
+
+// --- matchContext: empty conditions → always true ---
+
+test('matchContext: empty conditions {} → true', () => {
+  const world = { timeOfDay: '上午', weather: '晴', season: '春', locations: ['本丸·主屋'] }
+  const ls = { location: '本丸·主屋' }
+  assert.strictEqual(matchContext({}, world, ls), true)
+})
+
+test('matchContext: null conditions → true', () => {
+  assert.strictEqual(matchContext(null, {}, {}), true)
+})
+
+// --- matchContext: timeOfDay ---
+
+test('matchContext: timeOfDay match → true', () => {
+  const world = { timeOfDay: '上午' }
+  assert.strictEqual(matchContext({ timeOfDay: ['上午', '午后'] }, world, {}), true)
+})
+
+test('matchContext: timeOfDay miss → false', () => {
+  const world = { timeOfDay: '深夜' }
+  assert.strictEqual(matchContext({ timeOfDay: ['上午', '午后'] }, world, {}), false)
+})
+
+test('matchContext: timeOfDay absent in conditions → always matches', () => {
+  const world = { timeOfDay: '深夜' }
+  assert.strictEqual(matchContext({ weather: ['晴'] }, { timeOfDay: '深夜', weather: '晴' }, {}), true)
+})
+
+// --- matchContext: weather ---
+
+test('matchContext: weather match → true', () => {
+  const world = { weather: '雨' }
+  assert.strictEqual(matchContext({ weather: ['阴', '雨'] }, world, {}), true)
+})
+
+test('matchContext: weather miss → false', () => {
+  const world = { weather: '晴' }
+  assert.strictEqual(matchContext({ weather: ['阴', '雨'] }, world, {}), false)
+})
+
+// --- matchContext: season ---
+
+test('matchContext: season match → true', () => {
+  assert.strictEqual(matchContext({ season: ['春', '秋'] }, { season: '秋' }, {}), true)
+})
+
+test('matchContext: season miss → false', () => {
+  assert.strictEqual(matchContext({ season: ['春'] }, { season: '冬' }, {}), false)
+})
+
+// --- matchContext: location ---
+
+test('matchContext: location match (from lifeState) → true', () => {
+  assert.strictEqual(
+    matchContext({ location: ['练习场', '庭院'] }, {}, { location: '练习场' }),
+    true
+  )
+})
+
+test('matchContext: location miss → false', () => {
+  assert.strictEqual(
+    matchContext({ location: ['练习场'] }, {}, { location: '库房' }),
+    false
+  )
+})
+
+test('matchContext: location absent in lifeState + condition present → false', () => {
+  assert.strictEqual(
+    matchContext({ location: ['练习场'] }, {}, {}),
+    false
+  )
+})
+
+// --- matchContext: requiresOtherPresent ---
+
+test('matchContext: requiresOtherPresent=true, otherPresent=true → true', () => {
+  assert.strictEqual(
+    matchContext({ requiresOtherPresent: true }, {}, { otherPresent: true }),
+    true
+  )
+})
+
+test('matchContext: requiresOtherPresent=true, otherPresent=false → false (P1 no others)', () => {
+  assert.strictEqual(
+    matchContext({ requiresOtherPresent: true }, {}, { otherPresent: false }),
+    false
+  )
+})
+
+test('matchContext: requiresOtherPresent=true, otherPresent absent → false', () => {
+  assert.strictEqual(
+    matchContext({ requiresOtherPresent: true }, {}, {}),
+    false
+  )
+})
+
+test('matchContext: requiresOtherPresent=false → does not block (pass)', () => {
+  // requiresOtherPresent:false means "no constraint via this key" — let through
+  assert.strictEqual(
+    matchContext({ requiresOtherPresent: false }, {}, {}),
+    true
+  )
+})
+
+// --- matchContext: multi-condition AND ---
+
+test('matchContext: multiple conditions all match → true', () => {
+  const world = { timeOfDay: '上午', weather: '晴', season: '春' }
+  const ls    = { location: '练习场' }
+  assert.strictEqual(
+    matchContext({ timeOfDay: ['上午'], weather: ['晴'], season: ['春'], location: ['练习场'] }, world, ls),
+    true
+  )
+})
+
+test('matchContext: multiple conditions, one miss → false', () => {
+  const world = { timeOfDay: '深夜', weather: '晴', season: '春' }
+  const ls    = { location: '练习场' }
+  assert.strictEqual(
+    matchContext({ timeOfDay: ['上午'], weather: ['晴'], season: ['春'], location: ['练习场'] }, world, ls),
+    false
+  )
+})
+
+// --- selectAvailable ---
+
+const SAMPLE_ENTRIES = [
+  { type: '练习',     conditions: { timeOfDay: ['上午', '午后'] }, weight: 3 },
+  { type: '夜巡',     conditions: { timeOfDay: ['夜', '深夜'] },   weight: 2 },
+  { type: '思绪',     conditions: {},                              weight: 1 },
+  { type: '新命名角色', conditions: {},                             weight: 5 },  // forbidden
+]
+
+const FORBIDDEN = ['新命名角色', '重大伤亡']
+
+test('selectAvailable: matches context + excludes forbidden', () => {
+  const world = { timeOfDay: '上午' }
+  const result = selectAvailable(SAMPLE_ENTRIES, world, {}, FORBIDDEN)
+  const types = result.map((e) => e.type)
+  assert.ok(types.includes('练习'),   '练习 should be included')
+  assert.ok(types.includes('思绪'),   '思绪 should be included (empty conditions)')
+  assert.ok(!types.includes('夜巡'),  '夜巡 should be excluded (wrong timeOfDay)')
+  assert.ok(!types.includes('新命名角色'), '新命名角色 should be excluded (forbidden)')
+})
+
+test('selectAvailable: empty entries → []', () => {
+  assert.deepStrictEqual(selectAvailable([], {}, {}, FORBIDDEN), [])
+})
+
+test('selectAvailable: null entries → []', () => {
+  assert.deepStrictEqual(selectAvailable(null, {}, {}, FORBIDDEN), [])
+})
+
+test('selectAvailable: no forbidden list → includes all that match', () => {
+  const world = { timeOfDay: '夜' }
+  const result = selectAvailable(SAMPLE_ENTRIES, world, {}, [])
+  const types = result.map((e) => e.type)
+  assert.ok(types.includes('夜巡'))
+  assert.ok(types.includes('思绪'))
+  assert.ok(types.includes('新命名角色'))
+  assert.ok(!types.includes('练习'))
+})
+
+test('selectAvailable: preserves weight field', () => {
+  const world = { timeOfDay: '上午' }
+  const result = selectAvailable(SAMPLE_ENTRIES, world, {}, FORBIDDEN)
+  const 練習 = result.find((e) => e.type === '練習') || result.find((e) => e.type === '练习')
+  assert.ok(練習, '练习 entry should exist')
+  assert.strictEqual(練習.weight, 3)
+})
+
+test('selectAvailable: entry with no type is ignored', () => {
+  const entries = [{ conditions: {}, weight: 1 }]
+  assert.deepStrictEqual(selectAvailable(entries, {}, {}, []), [])
+})
+
+// --- sampleWeighted ---
+
+test('sampleWeighted: empty array → null', () => {
+  assert.strictEqual(sampleWeighted([], 0.5), null)
+})
+
+test('sampleWeighted: null → null', () => {
+  assert.strictEqual(sampleWeighted(null, 0.5), null)
+})
+
+test('sampleWeighted: single entry → always returns that type', () => {
+  assert.strictEqual(sampleWeighted([{ type: 'foo', weight: 5 }], 0), 'foo')
+  assert.strictEqual(sampleWeighted([{ type: 'foo', weight: 5 }], 0.99), 'foo')
+})
+
+test('sampleWeighted: two entries equal weight, r=0 → first', () => {
+  const items = [{ type: 'A', weight: 1 }, { type: 'B', weight: 1 }]
+  // total=2, r*total=0 → cursor after A=1 > 0 → picks A
+  assert.strictEqual(sampleWeighted(items, 0), 'A')
+})
+
+test('sampleWeighted: two entries equal weight, r=0.5 → second', () => {
+  const items = [{ type: 'A', weight: 1 }, { type: 'B', weight: 1 }]
+  // total=2, r*2=1.0 → cursor after A=1, 1.0 < 1? no → cursor after B=2, 1.0<2 → B
+  assert.strictEqual(sampleWeighted(items, 0.5), 'B')
+})
+
+test('sampleWeighted: r at bucket boundary picks correct side', () => {
+  // weights: A=2, B=3 → total=5; A bucket [0,2), B bucket [2,5)
+  const items = [{ type: 'A', weight: 2 }, { type: 'B', weight: 3 }]
+  // r=0.39: r*5=1.95 → falls in A (cursor after A=2 > 1.95)
+  assert.strictEqual(sampleWeighted(items, 0.39), 'A')
+  // r=0.40: r*5=2.0  → NOT in A (2.0 < 2 is false), falls in B (cursor after B=5 > 2.0)
+  assert.strictEqual(sampleWeighted(items, 0.40), 'B')
+})
+
+test('sampleWeighted: three entries, r picks third', () => {
+  const items = [{ type: 'X', weight: 1 }, { type: 'Y', weight: 1 }, { type: 'Z', weight: 1 }]
+  // total=3; r=0.67 → r*3=2.01; cursor: after X=1 (not), after Y=2 (not), after Z=3 (2.01<3) → Z
+  assert.strictEqual(sampleWeighted(items, 0.67), 'Z')
+})
+
+test('sampleWeighted: all zero weights → picks first (safe fallback)', () => {
+  const items = [{ type: 'A', weight: 0 }, { type: 'B', weight: 0 }]
+  assert.strictEqual(sampleWeighted(items, 0.5), 'A')
+})
+
+test('sampleWeighted: works without r (Math.random path, just must not throw)', () => {
+  const items = [{ type: 'A', weight: 1 }, { type: 'B', weight: 1 }]
+  const result = sampleWeighted(items)
+  assert.ok(result === 'A' || result === 'B')
+})
+
+// --- DEFAULT_ENTRIES: sanity checks ---
+
+test('DEFAULT_ENTRIES: 练习 has weight>0 and timeOfDay condition', () => {
+  const e = REGISTRY_DEFAULT_ENTRIES.find((x) => x.type === '练习')
+  assert.ok(e, '练习 entry should exist')
+  assert.ok(e.weight > 0)
+  assert.ok(Array.isArray(e.conditions.timeOfDay))
+})
+
+test('DEFAULT_ENTRIES: 思绪 has empty conditions (always matches)', () => {
+  const e = REGISTRY_DEFAULT_ENTRIES.find((x) => x.type === '思绪')
+  assert.ok(e, '思绪 entry should exist')
+  assert.deepStrictEqual(Object.keys(e.conditions), [])
+})
+
+// ---- world-continuity.js: continuityClamp ----
+
+const { continuityClamp } = require('./world-continuity')
+
+const WORLD_BASE = {
+  clock: 1000000,
+  locations: ['本丸·主屋', '练习场', '库房', '庭院', '檐下', '厨房'],
+  externalLocations: ['城下町', '近所'],
+}
+
+// --- ok cases ---
+
+test('continuityClamp: legal internal location, clock advances → ok=true, no change', () => {
+  const ns = { clock: 1001000, location: '练习场' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+  assert.strictEqual(r.clamped.location, '练习场')
+  assert.strictEqual(r.clamped.clock, 1001000)
+  assert.strictEqual(r.reason, '')
+})
+
+test('continuityClamp: legal external location (whitelist) → ok=true', () => {
+  const ns = { clock: 1001000, location: '城下町' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+  assert.strictEqual(r.clamped.location, '城下町')
+})
+
+test('continuityClamp: clock equal to world.clock → ok (monotonic ok on equal)', () => {
+  const ns = { clock: 1000000, location: '庭院' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+})
+
+test('continuityClamp: no location in nextState → ok (no location to validate)', () => {
+  const ns = { clock: 1000000 }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+})
+
+// --- clock rewind ---
+
+test('continuityClamp: clock rewind → ok=false, clamped to world.clock', () => {
+  const ns = { clock: 999999, location: '练习场' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  assert.strictEqual(r.clamped.clock, 1000000)
+  assert.ok(r.reason.includes('时钟倒流'))
+})
+
+test('continuityClamp: clock=0 when world.clock=1000000 → clamped', () => {
+  const ns = { clock: 0, location: '练习场' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  assert.strictEqual(r.clamped.clock, 1000000)
+})
+
+// --- illegal location ---
+
+test('continuityClamp: illegal location → ok=false, clamped to first internal', () => {
+  const ns = { clock: 1001000, location: '纽约' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  assert.strictEqual(r.clamped.location, '本丸·主屋')  // first in locations list
+  assert.ok(r.reason.includes('非法地点'))
+  assert.ok(r.reason.includes('纽约'))
+})
+
+test('continuityClamp: unauthorized external → clamped (§5.4d)', () => {
+  const ns = { clock: 1001000, location: '遠征先·山道' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  // 遠征先·山道 is not in locations nor externalLocations
+  assert.ok(r.clamped.location !== '遠征先·山道')
+})
+
+// --- travel time ---
+
+test('continuityClamp: external move with sufficient duration → ok', () => {
+  const ns = { clock: 1001000, location: '城下町', duration: 20 }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+})
+
+test('continuityClamp: external move with too-short duration → ok=false, clamped', () => {
+  const ns = { clock: 1001000, location: '城下町', duration: 5 }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  assert.ok(r.clamped.duration >= 15)
+  assert.ok(r.reason.includes('移动时间不足'))
+})
+
+test('continuityClamp: internal move with sufficient duration → ok', () => {
+  const ns = { clock: 1001000, location: '练习场', duration: 10 }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+})
+
+test('continuityClamp: internal move with too-short duration → ok=false, clamped to 5', () => {
+  const ns = { clock: 1001000, location: '练习场', duration: 2 }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  assert.strictEqual(r.clamped.duration, 5)
+  assert.ok(r.reason.includes('移动时间不足'))
+})
+
+test('continuityClamp: no duration → travel time rule not enforced', () => {
+  const ns = { clock: 1001000, location: '城下町' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  // No duration field means travel-time check is skipped
+  assert.strictEqual(r.ok, true)
+})
+
+// --- multiple violations ---
+
+test('continuityClamp: clock rewind + illegal location → ok=false, both clamped', () => {
+  const ns = { clock: 500000, location: '月球' }
+  const r = continuityClamp(ns, WORLD_BASE)
+  assert.strictEqual(r.ok, false)
+  assert.strictEqual(r.clamped.clock, 1000000)
+  assert.ok(r.clamped.location !== '月球')
+  assert.ok(r.reason.includes('时钟倒流'))
+  assert.ok(r.reason.includes('非法地点'))
+})
+
+test('continuityClamp: does not mutate input', () => {
+  const ns = { clock: 500000, location: '火星', duration: 1 }
+  const original = Object.assign({}, ns)
+  continuityClamp(ns, WORLD_BASE)
+  assert.deepStrictEqual(ns, original)
+})
+
+// --- empty/null world ---
+
+test('continuityClamp: empty world → clock clamped to 0, location illegal → safe default', () => {
+  const ns = { clock: 1000, location: '练习场' }
+  const r = continuityClamp(ns, {})
+  // 练习场 not in an empty locations list → illegal, clamp to '本丸·主屋'
+  assert.strictEqual(r.ok, false)
+  assert.strictEqual(r.clamped.location, '本丸·主屋')
+})
+
+test('continuityClamp: null nextState → ok=true, clamped={} (graceful)', () => {
+  const r = continuityClamp(null, WORLD_BASE)
+  assert.strictEqual(r.ok, true)
+})
+
 async function main() {
   await runAsync('invoke: passes signal to model (empty msgs, no langchain needed)', async () => {
     let receivedOpts
