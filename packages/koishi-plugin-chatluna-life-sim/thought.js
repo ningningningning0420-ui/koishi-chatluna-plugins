@@ -116,8 +116,8 @@ function createThoughtBuffer(ctx) {
       createdAt:       now,
       revisedAt:       null,
     }
-    await ctx.database.create(TABLE, row)
-    return row
+    const created = await ctx.database.create(TABLE, row)
+    return created || row
   }
 
   /**

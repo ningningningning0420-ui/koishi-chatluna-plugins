@@ -1816,7 +1816,9 @@ function makeFakeCtx() {
       async create(table, row) {
         if (!store[table]) store[table] = []
         const id = store[table].length + 1
-        store[table].push(Object.assign({ id }, row))
+        const created = Object.assign({ id }, row)
+        store[table].push(created)
+        return created
       },
       async set(table, query, patch) {
         const rows = store[table] || []
@@ -3910,6 +3912,15 @@ async function main() {
     assert.strictEqual(dbRows[0].target, '审神者')
     assert.strictEqual(dbRows[0].status, 'pending')
     assert.ok(dbRows[0].createdAt instanceof Date)
+  })
+
+  await runAsync('createThoughtBuffer: store returns created row with auto-assigned numeric id', async () => {
+    const ctx = makeFakeCtx()
+    const tb = createThoughtBuffer(ctx)
+    const row = await tb.store({ presetId: 'higekiri', content: '想说的话', target: '审神者', urgency: 'low' })
+
+    assert.ok(typeof row.id === 'number', 'store() must return a row with a numeric id; got: ' + JSON.stringify(row.id))
+    assert.ok(row.id >= 1, 'id should be >= 1')
   })
 
   await runAsync('createThoughtBuffer: recall returns pending thoughts matching target', async () => {
