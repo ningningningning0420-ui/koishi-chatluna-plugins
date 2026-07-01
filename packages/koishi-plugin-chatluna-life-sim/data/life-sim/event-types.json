@@ -49,11 +49,10 @@
   {
     "type": "外出采购",
     "conditions": {
-      "timeOfDay": ["上午", "午后"],
-      "location": ["城下町", "近所"]
+      "timeOfDay": ["上午", "午后"]
     },
     "weight": 2,
-    "comment": "前往城下町或近所购置所需物品（出本丸，需在 externalLocations 内）"
+    "comment": "前往城下町或近所购置所需物品（出本丸事件：目的地由roll产出、continuityClamp按externalLocations白名单校验，非当前地点触发条件）"
   },
   {
     "type": "庭院漫步",
