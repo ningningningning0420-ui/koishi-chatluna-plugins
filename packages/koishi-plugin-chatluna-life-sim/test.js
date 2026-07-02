@@ -5433,6 +5433,93 @@ async function main() {
     assert.ok(result.includes('事件A') && result.includes('事件B'), 'both events rendered')
   })
 
+  // ---- renderRecentLife: 相对时间标注 (§4.1) ----
+  // Fixed clock: 2026-07-01 15:00 Asia/Shanghai (= 2026-07-01T07:00Z)
+  {
+    const TZ = 'Asia/Shanghai'
+    const NOW = Date.UTC(2026, 6, 1, 7, 0, 0) // 2026-07-01 15:00 local
+    const OPTS = { nowMs: NOW, timezone: TZ }
+
+    test('renderRecentLife(opts): <45min → [刚刚]', () => {
+      const events = [{ title: '喝了口茶', mood: '平静', ts: NOW - 10 * 60 * 1000 }]
+      const result = renderRecentLife(events, 5, OPTS)
+      assert.strictEqual(result, '[刚刚] 喝了口茶（平静）')
+    })
+
+    test('renderRecentLife(opts): 同一本地日、超45min → [今天上午] (本地09:30)', () => {
+      const events = [{ title: '晨间打扫', ts: Date.UTC(2026, 6, 1, 1, 30) }] // 09:30 local
+      const result = renderRecentLife(events, 5, OPTS)
+      assert.strictEqual(result, '[今天上午] 晨间打扫')
+    })
+
+    test('renderRecentLife(opts): 昨天本地日 → [昨天]', () => {
+      const events = [{ title: '远征归来', ts: Date.UTC(2026, 5, 30, 12, 0) }] // 06-30 20:00 local
+      const result = renderRecentLife(events, 5, OPTS)
+      assert.strictEqual(result, '[昨天] 远征归来')
+    })
+
+    test('renderRecentLife(opts): 前天本地日 → [前天]', () => {
+      const events = [{ title: '锻刀失败', ts: Date.UTC(2026, 5, 29, 4, 0) }] // 06-29 12:00 local
+      const result = renderRecentLife(events, 5, OPTS)
+      assert.strictEqual(result, '[前天] 锻刀失败')
+    })
+
+    test('renderRecentLife(opts): 更早 → [N天前]', () => {
+      const events = [{ title: '演练受伤', ts: Date.UTC(2026, 5, 27, 4, 0) }] // 06-27 local → 4天前
+      const result = renderRecentLife(events, 5, OPTS)
+      assert.strictEqual(result, '[4天前] 演练受伤')
+    })
+
+    test('renderRecentLife(opts): 跨午夜 — 昨天23:50的事在今天00:10看 → [昨天] 而非 [刚刚]', () => {
+      const now = Date.UTC(2026, 5, 30, 16, 10) // 2026-07-01 00:10 local
+      const events = [{ title: '夜谈', ts: Date.UTC(2026, 5, 30, 15, 50) }] // 06-30 23:50 local, 仅20min前
+      const result = renderRecentLife(events, 5, { nowMs: now, timezone: TZ })
+      assert.strictEqual(result, '[昨天] 夜谈')
+    })
+
+    test('renderRecentLife(opts): 恰好45min → 不是[刚刚]而是[今天下午]', () => {
+      const events = [{ title: '午后练剑', ts: NOW - 45 * 60 * 1000 }] // 14:15 local
+      const result = renderRecentLife(events, 5, OPTS)
+      assert.strictEqual(result, '[今天下午] 午后练剑')
+    })
+
+    test('renderRecentLife(opts): 本地时段分档 — 凌晨/早上/中午/晚上', () => {
+      const nowLate = Date.UTC(2026, 6, 1, 15, 0) // 2026-07-01 23:00 local
+      const events = [
+        { title: '睡前翻书', ts: Date.UTC(2026, 6, 1, 11, 0) },   // 19:00 local → 晚上
+        { title: '午膳', ts: Date.UTC(2026, 6, 1, 4, 0) },        // 12:00 local → 中午
+        { title: '晨练', ts: Date.UTC(2026, 5, 30, 22, 0) },      // 07-01 06:00 local (UTC 还在昨天) → 早上
+        { title: '守夜', ts: Date.UTC(2026, 5, 30, 19, 0) },      // 07-01 03:00 local → 凌晨
+      ]
+      const result = renderRecentLife(events, 10, { nowMs: nowLate, timezone: TZ })
+      const lines = result.split('\n')
+      assert.strictEqual(lines[0], '[今天晚上] 睡前翻书')
+      assert.strictEqual(lines[1], '[今天中午] 午膳')
+      assert.strictEqual(lines[2], '[今天早上] 晨练')
+      assert.strictEqual(lines[3], '[今天凌晨] 守夜')
+    })
+
+    test('renderRecentLife(opts): 事件缺 ts → 该行不加标签', () => {
+      const events = [
+        { title: '有时间戳', ts: NOW - 10 * 60 * 1000 },
+        { title: '无时间戳', mood: '好' },
+      ]
+      const result = renderRecentLife(events, 5, OPTS)
+      const lines = result.split('\n')
+      assert.strictEqual(lines[0], '[刚刚] 有时间戳')
+      assert.strictEqual(lines[1], '无时间戳（好）', 'missing ts → no label prefix')
+    })
+
+    test('renderRecentLife: 不传 opts → 行为与旧版完全一致（有 ts 也不加标签）', () => {
+      const events = [
+        { title: '早锻刀', mood: '专注', ts: NOW - 10 * 60 * 1000 },
+        { title: '午休', ts: Date.UTC(2026, 5, 29, 4, 0) },
+      ]
+      const result = renderRecentLife(events, 5)
+      assert.strictEqual(result, '早锻刀（专注）\n午休')
+    })
+  }
+
   // ---- renderLifeState ----
 
   test('renderLifeState: null → empty string', () => {

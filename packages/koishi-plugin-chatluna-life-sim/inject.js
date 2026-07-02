@@ -3,7 +3,9 @@
 // inject.js — PromptProvider 注入 + 心情波动 for koishi-plugin-chatluna-life-sim
 //
 // Pure helpers (offline-testable, no runtime deps, no new Date()):
-//   renderRecentLife(events, n)        → digest text of recent N events
+//   renderRecentLife(events, n, opts)  → digest text of recent N events
+//                                        (opts={nowMs,timezone} → 相对时间标注 §4.1)
+//   relativeTimeLabel(ts, nowMs, tz)   → '刚刚'/'今天上午'/'昨天'/'前天'/'N天前'/''
 //   renderLifeState(state)             → text: 此刻在 <location>… 心情… 未了的事…
 //   renderTodayPlan(plan, nowMs)       → text listing today's blocks; current block marked
 //   renderPendingThoughts(thoughts)    → text of pending thoughts (or '' if empty)
@@ -20,27 +22,130 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * Derive the local calendar day + hour of a unix-ms instant in an IANA timezone.
+ *
+ * Same Intl.DateTimeFormat approach as proactive.js inQuietHours (kept local
+ * here to avoid a proactive↔inject require cycle — the two comments cross-ref).
+ * dayMs is Date.UTC(localY, localM-1, localD): a timezone-independent key for
+ * the LOCAL calendar day, so subtracting two dayMs / 86400000 = local day diff.
+ *
+ * No new Date(). ms comes from the caller. Pure function.
+ *
+ * @param {number} ms        Unix-ms instant
+ * @param {string} timezone  IANA timezone string, e.g. 'Asia/Shanghai' (falls back to UTC)
+ * @returns {{ dayMs: number, hour: number }}
+ */
+function _localDayHour(ms, timezone) {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: 'numeric', hour12: false,
+      timeZone: timezone || 'UTC',
+    })
+    const parts = fmt.formatToParts(new Date(ms))
+    const get = (t) => {
+      const p = parts.find((x) => x.type === t)
+      return p ? parseInt(p.value, 10) : NaN
+    }
+    const y = get('year')
+    const mo = get('month')
+    const d = get('day')
+    let hour = get('hour')
+    // Intl returns '24' for midnight in some environments (means 0)
+    if (hour === 24) hour = 0
+    if (![y, mo, d, hour].every(Number.isFinite)) throw new Error('bad parts')
+    return { dayMs: Date.UTC(y, mo - 1, d), hour }
+  } catch (_) {
+    const dt = new Date(ms)
+    return {
+      dayMs: Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()),
+      hour: dt.getUTCHours(),
+    }
+  }
+}
+
+/**
+ * Map a local hour (0-23) to a Chinese part-of-day word.
+ * 凌晨(0-4) 早上(5-7) 上午(8-10) 中午(11-12) 下午(13-17) 晚上(18-23)
+ */
+function _dayPeriod(hour) {
+  if (hour < 5) return '凌晨'
+  if (hour < 8) return '早上'
+  if (hour < 11) return '上午'
+  if (hour < 13) return '中午'
+  if (hour < 18) return '下午'
+  return '晚上'
+}
+
+/**
+ * Relative-time label for an event timestamp, as seen from nowMs (§4.1).
+ *
+ * Tiers (local calendar day first, so 昨天23:50 seen at 00:10 is '昨天', not '刚刚'):
+ *   same local day & <45min ago → '刚刚'
+ *   same local day             → '今天<时段>' (时段 from the EVENT's local hour)
+ *   1 local day ago            → '昨天'
+ *   2 local days ago           → '前天'
+ *   ≥3 local days ago          → 'N天前'
+ *   invalid input / future day → ''  (caller adds no label)
+ *
+ * All time comes from the arguments — no Date.now(). Pure function.
+ *
+ * @param {number} ts        Event unix-ms
+ * @param {number} nowMs     "Now" unix-ms (caller-supplied)
+ * @param {string} timezone  IANA timezone string (falls back to UTC)
+ * @returns {string}
+ */
+function relativeTimeLabel(ts, nowMs, timezone) {
+  if (!Number.isFinite(+ts) || !Number.isFinite(+nowMs)) return ''
+  const ev = _localDayHour(+ts, timezone)
+  const now = _localDayHour(+nowMs, timezone)
+  const dayDiff = Math.round((now.dayMs - ev.dayMs) / 86400000)
+
+  if (dayDiff === 0) {
+    if (+nowMs - +ts < 45 * 60 * 1000) return '刚刚'
+    return '今天' + _dayPeriod(ev.hour)
+  }
+  if (dayDiff === 1) return '昨天'
+  if (dayDiff === 2) return '前天'
+  if (dayDiff >= 3) return dayDiff + '天前'
+  return '' // event on a future local day — don't label
+}
+
+/**
  * Render a short text digest of the N most-recent events.
  *
  * Each line: "<title>（<mood>）" or just "<title>" if no mood/title.
  * If events is empty or n=0, returns ''.
  * Caps at n if provided.
  *
- * No new Date() called. Pure function.
+ * With opts={nowMs,timezone} each line gets a relative-time prefix like
+ * "[刚刚] " / "[今天上午] " / "[昨天] " / "[前天] " / "[N天前] " derived from
+ * event.ts (§4.1 — 否则三天前的事和一小时前的事对主模型无区别). Events without
+ * a ts get no label. Without opts the output is byte-identical to the old
+ * un-labelled format.
+ *
+ * No new Date().getTime()-style "now" — all time comes from opts. Pure function.
  *
  * @param {Array} events  Array of life_sim_event objects (already sorted newest-first, or unsorted)
  * @param {number} [n]    Max events to render (default: all)
+ * @param {{nowMs:number, timezone?:string}} [opts]  Enable relative-time labels
  * @returns {string}
  */
-function renderRecentLife(events, n) {
+function renderRecentLife(events, n, opts) {
   if (!Array.isArray(events) || events.length === 0) return ''
   const cap = (n != null && Number.isFinite(+n) && +n >= 0) ? Math.round(+n) : events.length
   if (cap === 0) return ''
+  const labelled = !!(opts && Number.isFinite(+opts.nowMs))
   const slice = events.slice(0, cap)
   const lines = slice.map((e) => {
     const title = (e && e.title) ? String(e.title) : '（无标题）'
     const mood = (e && e.mood) ? `（${e.mood}）` : ''
-    return title + mood
+    let prefix = ''
+    if (labelled && e && Number.isFinite(+e.ts)) {
+      const label = relativeTimeLabel(+e.ts, +opts.nowMs, opts.timezone)
+      if (label) prefix = `[${label}] `
+    }
+    return prefix + title + mood
   })
   return lines.join('\n')
 }
@@ -245,7 +350,12 @@ function createInject(ctx, config, deps) {
             if (!presetId) return ''
             const n = (args && args[0]) ? Math.max(1, parseInt(args[0], 10) || 10) : 10
             const events = await deps.recent(presetId, n)
-            return renderRecentLife(events, n)
+            // §4.1 相对时间标注: nowMs/timezone supplied here by the runtime glue
+            // (pure helper never calls Date.now(); tz default mirrors index.js _todayStr)
+            return renderRecentLife(events, n, {
+              nowMs: Date.now(),
+              timezone: (config && config.timezone) || 'Asia/Shanghai',
+            })
           } catch (err) {
             logger.warn
               ? logger.warn('[inject] recent_life error: ' + err.message)
@@ -333,6 +443,7 @@ function createInject(ctx, config, deps) {
 module.exports = {
   // Pure helpers (exported for testing + composing)
   renderRecentLife,
+  relativeTimeLabel,
   renderLifeState,
   renderTodayPlan,
   renderPendingThoughts,

@@ -228,6 +228,9 @@ exports.apply = (ctx, config) => {
     }
   }
 
+  // {recent_life} 相对时间标注 (§4.1): renderRecentLife 的 opts —
+  // { nowMs: Date.now(), timezone: config.timezone } — 由 inject.js 的 provider
+  // 胶水在每次渲染时供给（config 即此处传入的这份；纯 helper 自身不碰 Date.now）。
   const inject = createInject(ctx, config, {
     recent: (presetId, n) => shortMem.recent(presetId, n),
     getState: (presetId) => lifeState.getState(presetId),
