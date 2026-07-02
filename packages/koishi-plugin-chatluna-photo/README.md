@@ -37,6 +37,7 @@
 - **多人合影**：配置 `characterLibrary`（已知角色填 danbooru tag，原创角色填外貌 tag 串），planner 自动分配 NAI V4.5 char_captions 与站位。
 - **失败拟人化**：按错误类型让 bot 说一句台词（点数不足"相机没电了"/磁盘满/其它），并写自我备注说明没发成。
 - **photo 服务**：对外暴露 `ctx.photo.recallEntry(desc, opts)`，供 koishi-plugin-chatluna-relay 转发相册照片给白名单好友。
+- **成品图回流**：发图/召回后把成品图挂在自我备注上回流进 bot 自己的上下文——多模态主模型直接"看到"自己刚发的那张（最近 8 条内、每会话只保留最新一张的像素）。需要历史图片补丁 **v2**（同一补丁目录，`node apply-history-image-patch.js` 会自动 v1→v2 升级）+ chatluna-character `image: true`。`runtime.selfPhotoInContext` 可关。
 
 ## 关键配置
 

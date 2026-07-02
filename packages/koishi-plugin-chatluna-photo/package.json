@@ -24,6 +24,7 @@
     "model.js",
     "album.js",
     "album-pick.js",
+    "context-image.js",
     "defaults.js",
     "README.md",
     "LICENSE"

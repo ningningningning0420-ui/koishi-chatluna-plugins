@@ -30,6 +30,7 @@ const ptag = require('./photo-tag')
 const model = require('./model')
 const album = require('./album')
 const albumPick = require('./album-pick')
+const cimg = require('./context-image')
 const D = require('./defaults')
 
 exports.name = 'chatluna-photo'
@@ -104,6 +105,7 @@ exports.Config = Schema.object({
 
   runtime: Schema.object({
     timeout: Schema.number().default(120000).description('单次出图超时（ms）。'),
+    selfPhotoInContext: Schema.boolean().default(true).description('发图/召回后把成品图回流进 bot 自己的上下文（挂在自我备注上）：配合历史图片补丁 v2，多模态主模型能直接"看到"自己刚发的那张（最近 8 条消息内有效；同会话只保留最新一张的像素，旧的自动降级成文字）。需 chatluna-character 开 image:true。'),
   }).description('运行时'),
 
   album: Schema.object({
@@ -402,7 +404,11 @@ exports.apply = (ctx, config) => {
     try {
       await session.send(h.image(pathToFileURL(best.file).href))
       logger.info('album recall: sent ' + best.id + ' (' + best.intent + ') for query ' + JSON.stringify(it.intent))
-      pushSelfNote(sessionKeyOf(session), '（我从相册里翻出之前那张照片发了出去：' + best.intent + '）', session.bot)
+      let imgs = null
+      if (config.runtime.selfPhotoInContext !== false) {
+        try { imgs = cimg.makeSelfPhotoImages(await fs.promises.readFile(best.file), best.id) } catch (e) { /* note stays text-only */ }
+      }
+      pushSelfNote(sessionKeyOf(session), '（我从相册里翻出之前那张照片发了出去：' + best.intent + '）', session.bot, imgs)
     } catch (e) {
       logger.warn('album recall send failed: ' + (e && e.message))
     }
@@ -513,7 +519,10 @@ exports.apply = (ctx, config) => {
         if (meta.replaceAlbumId && meta.replaceAlbumId !== entry.id) removeAlbumEntry(meta.replaceAlbumId)
       }
     }
-    if (!meta.reroll && !meta.auto) pushSelfNote(key, '（我刚给对方发了一张自己拍的照片：' + meta.intent + '）', session.bot)
+    if (!meta.reroll && !meta.auto) {
+      const imgs = config.runtime.selfPhotoInContext !== false ? cimg.makeSelfPhotoImages(png, spec.albumId || 'tmp' + Date.now()) : null
+      pushSelfNote(key, '（我刚给对方发了一张自己拍的照片：' + meta.intent + '）', session.bot, imgs)
+    }
     logger.info((meta.reroll ? 're-rolled' : 'sent') + ' a photo (self_in_frame=' + meta.selfInFrame + ', nsfw=' + !!meta.nsfw + ')')
   }
 
@@ -572,7 +581,7 @@ exports.apply = (ctx, config) => {
   // Push a bot-attributed note into the chatluna-character buffer so that, next turn, the bot
   // KNOWS it sent a photo and what it depicts (relay's pushToBuffer pattern; id === selfId makes
   // chatluna treat it as the bot's own line). Best-effort.
-  function pushSelfNote(key, text, bot) {
+  function pushSelfNote(key, text, bot, images) {
     try {
       const cc = ctx.chatluna_character
       if (!cc || typeof cc.getMessages !== 'function' || !text) return
@@ -583,6 +592,14 @@ exports.apply = (ctx, config) => {
         timestamp: Date.now(),
       }
       const arr = cc.getMessages(key)
+      // self-photo feedback: attach the PNG (data URL) + selfPhoto flag so the history-image
+      // patch v2 shows the NEWEST such note as real pixels to the multimodal main model.
+      // Older notes' images are stripped first — at most ONE live image per conversation.
+      if (Array.isArray(images) && images.length) {
+        if (Array.isArray(arr)) cimg.stripOldSelfPhotos(arr)
+        msg.images = images
+        msg.selfPhoto = true
+      }
       if (Array.isArray(arr)) arr.push(msg)
       else if (cc._messages) cc._messages[key] = [msg]
     } catch (e) {
