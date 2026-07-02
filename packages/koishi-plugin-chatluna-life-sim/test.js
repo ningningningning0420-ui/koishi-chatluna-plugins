@@ -1808,7 +1808,13 @@ function makeFakeCtx() {
         const rows = store[table] || []
         return rows.filter((r) => {
           for (const k of Object.keys(query)) {
-            if (r[k] !== query[k]) return false
+            const qv = query[k]
+            // Support { $in: [...] } operator
+            if (qv && typeof qv === 'object' && Array.isArray(qv.$in)) {
+              if (!qv.$in.includes(r[k])) return false
+            } else {
+              if (r[k] !== qv) return false
+            }
           }
           return true
         })
@@ -1825,10 +1831,32 @@ function makeFakeCtx() {
         for (const r of rows) {
           let match = true
           for (const k of Object.keys(query)) {
-            if (r[k] !== query[k]) { match = false; break }
+            const qv = query[k]
+            if (qv && typeof qv === 'object' && Array.isArray(qv.$in)) {
+              if (!qv.$in.includes(r[k])) { match = false; break }
+            } else {
+              if (r[k] !== qv) { match = false; break }
+            }
           }
           if (match) Object.assign(r, patch)
         }
+      },
+      async remove(table, query) {
+        if (!store[table]) return
+        store[table] = store[table].filter((r) => {
+          for (const k of Object.keys(query)) {
+            const qv = query[k]
+            // Support { id: [...] } as shorthand for $in
+            if (Array.isArray(qv)) {
+              if (qv.includes(r[k])) return false  // remove if matches
+            } else if (qv && typeof qv === 'object' && Array.isArray(qv.$in)) {
+              if (qv.$in.includes(r[k])) return false
+            } else {
+              if (r[k] === qv) return false
+            }
+          }
+          return true  // keep
+        })
       },
       _store: store,
     },
@@ -4569,6 +4597,760 @@ async function main() {
     await bridge.maybeFollowUp('higekiri', nowMs)
     assert.strictEqual(sent.length, 0, 'cap=0 should block follow-up send')
     assert.strictEqual(goLiveCalled, true, 'goLive called after cap block')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: memory-long.js — pure matchByKey
+  // ---------------------------------------------------------------------------
+
+  const { matchByKey, createLongTermMemory } = require('./memory-long')
+
+  // matchByKey — thread key
+  test('matchByKey: thread key matches entry with that keyword', () => {
+    const entries = [
+      { id: 1, keywords: ['锻刀', '研磨'], entities: [], content: '打刀', summary: '打刀日', createdAt: '2026-06-01' },
+      { id: 2, keywords: ['读书', '茶道'], entities: [], content: '喝茶', summary: '喝茶日', createdAt: '2026-06-02' },
+    ]
+    const result = matchByKey(entries, { thread: '锻刀' })
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].id, 1)
+  })
+
+  test('matchByKey: thread key is case-insensitive', () => {
+    const entries = [
+      { id: 1, keywords: ['锻刀', '研磨'], entities: [], content: '打刀', summary: '', createdAt: '2026-06-01' },
+    ]
+    const result = matchByKey(entries, { thread: '锻刀' })
+    assert.strictEqual(result.length, 1)
+  })
+
+  test('matchByKey: thread key also matches content containing thread string', () => {
+    const entries = [
+      { id: 1, keywords: [], entities: [], content: '今天去练习场锻刀了', summary: '', createdAt: '2026-06-01' },
+      { id: 2, keywords: [], entities: [], content: '喝茶读书', summary: '', createdAt: '2026-06-02' },
+    ]
+    const result = matchByKey(entries, { thread: '锻刀' })
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].id, 1)
+  })
+
+  test('matchByKey: thread key returns empty when no match', () => {
+    const entries = [
+      { id: 1, keywords: ['读书'], entities: [], content: '读书', summary: '', createdAt: '2026-06-01' },
+    ]
+    const result = matchByKey(entries, { thread: '锻刀' })
+    assert.strictEqual(result.length, 0)
+  })
+
+  // matchByKey — entity key
+  test('matchByKey: entity key matches entry with that entity', () => {
+    const entries = [
+      { id: 1, keywords: [], entities: ['膝丸', '髭切'], content: '一起对练', summary: '', createdAt: '2026-06-01' },
+      { id: 2, keywords: [], entities: ['审神者'],       content: '和主人聊天', summary: '', createdAt: '2026-06-01' },
+    ]
+    const result = matchByKey(entries, { entity: '膝丸' })
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].id, 1)
+  })
+
+  test('matchByKey: entity key returns empty when no match', () => {
+    const entries = [
+      { id: 1, keywords: [], entities: ['审神者'], content: '喝茶', summary: '', createdAt: '2026-06-01' },
+    ]
+    const result = matchByKey(entries, { entity: '膝丸' })
+    assert.strictEqual(result.length, 0)
+  })
+
+  // matchByKey — date key
+  test('matchByKey: date key matches entries created on that date', () => {
+    const entries = [
+      { id: 1, keywords: [], entities: [], content: '打刀', summary: '', createdAt: new Date('2026-06-01T08:00:00Z') },
+      { id: 2, keywords: [], entities: [], content: '读书', summary: '', createdAt: new Date('2026-06-02T08:00:00Z') },
+    ]
+    const result = matchByKey(entries, { date: '2026-06-01' })
+    assert.strictEqual(result.length, 1)
+    assert.strictEqual(result[0].id, 1)
+  })
+
+  test('matchByKey: date key matches ISO string createdAt', () => {
+    const entries = [
+      { id: 1, keywords: [], entities: [], content: '打刀', summary: '', createdAt: '2026-06-01T12:00:00.000Z' },
+    ]
+    const result = matchByKey(entries, { date: '2026-06-01' })
+    assert.strictEqual(result.length, 1)
+  })
+
+  test('matchByKey: date key returns empty when no match', () => {
+    const entries = [
+      { id: 1, keywords: [], entities: [], content: '读书', summary: '', createdAt: '2026-06-02T00:00:00Z' },
+    ]
+    const result = matchByKey(entries, { date: '2026-06-01' })
+    assert.strictEqual(result.length, 0)
+  })
+
+  test('matchByKey: empty entries → []', () => {
+    assert.deepStrictEqual(matchByKey([], { thread: '锻刀' }), [])
+  })
+
+  test('matchByKey: null entries → []', () => {
+    assert.deepStrictEqual(matchByKey(null, { thread: '锻刀' }), [])
+  })
+
+  test('matchByKey: unknown key shape → []', () => {
+    const entries = [{ id: 1, keywords: ['锻刀'], entities: [], content: '', summary: '', createdAt: '2026-06-01' }]
+    assert.deepStrictEqual(matchByKey(entries, { unknown: 'foo' }), [])
+  })
+
+  test('matchByKey: can match multiple entries for same thread', () => {
+    const entries = [
+      { id: 1, keywords: ['锻刀'], entities: [], content: '', summary: '', createdAt: '2026-06-01' },
+      { id: 2, keywords: ['锻刀', '研磨'], entities: [], content: '', summary: '', createdAt: '2026-06-02' },
+      { id: 3, keywords: ['读书'], entities: [], content: '', summary: '', createdAt: '2026-06-03' },
+    ]
+    const result = matchByKey(entries, { thread: '锻刀' })
+    assert.strictEqual(result.length, 2)
+    const ids = result.map((e) => e.id).sort()
+    assert.deepStrictEqual(ids, [1, 2])
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: memory-long.js — DB glue (fake-ctx)
+  // ---------------------------------------------------------------------------
+
+  await runAsync('createLongTermMemory: upsertLtm creates new entry with correct fields', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const entry = await ltm.upsertLtm('higekiri', {
+      kind: 'event',
+      content: '今天在练习场锻刀，刀刃磨得很顺手。',
+      summary: '锻刀日',
+      keywords: ['锻刀', '练习场'],
+      entities: ['髭切'],
+      importance: 0.7,
+    }, nowMs)
+
+    assert.ok(entry.id, 'created entry should have an id')
+    assert.strictEqual(entry.presetId, 'higekiri')
+    assert.strictEqual(entry.kind, 'event')
+    assert.ok(entry.createdAt instanceof Date || typeof entry.createdAt !== 'undefined')
+  })
+
+  await runAsync('createLongTermMemory: upsertLtm uses RETURNED id, not input', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const e1 = await ltm.upsertLtm('higekiri', { kind: 'event', content: 'first', keywords: [], entities: [], importance: 0.5 }, nowMs)
+    const e2 = await ltm.upsertLtm('higekiri', { kind: 'event', content: 'second', keywords: [], entities: [], importance: 0.5 }, nowMs)
+    assert.ok(e1.id !== e2.id, 'each create should get a unique id')
+  })
+
+  await runAsync('createLongTermMemory: upsertLtm with id updates existing entry', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const created = await ltm.upsertLtm('higekiri', {
+      kind: 'event', content: '原始内容', keywords: ['锻刀'], entities: [], importance: 0.5
+    }, nowMs)
+
+    const updated = await ltm.upsertLtm('higekiri', {
+      id: created.id,
+      kind: 'event', content: '更新内容', keywords: ['锻刀', '磨刀'], entities: [], importance: 0.8
+    }, nowMs + 1000)
+
+    assert.strictEqual(updated.id, created.id, 'id should be unchanged')
+    // Check DB row was updated
+    const rows = ctx.database._store['life_sim_ltm']
+    const row = rows.find((r) => r.id === created.id)
+    assert.ok(row, 'row should exist in DB')
+    // keywords should be JSON string containing the updated keywords
+    assert.ok(row.keywords.includes('磨刀'), 'keywords should be updated')
+  })
+
+  await runAsync('createLongTermMemory: byKey returns entries matching thread', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    await ltm.upsertLtm('higekiri', { kind: 'event', content: '锻刀', keywords: ['锻刀', '练习场'], entities: [], importance: 0.7 }, nowMs)
+    await ltm.upsertLtm('higekiri', { kind: 'event', content: '读书', keywords: ['读书'], entities: [], importance: 0.4 }, nowMs)
+
+    const results = await ltm.byKey('higekiri', { thread: '锻刀' })
+    assert.strictEqual(results.length, 1)
+    assert.ok(results[0].content.includes('锻刀'))
+  })
+
+  await runAsync('createLongTermMemory: byKey returns entries matching entity', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    await ltm.upsertLtm('higekiri', { kind: 'event', content: '与膝丸对练', keywords: ['对练'], entities: ['膝丸'], importance: 0.6 }, nowMs)
+    await ltm.upsertLtm('higekiri', { kind: 'event', content: '独自读书', keywords: ['读书'], entities: [], importance: 0.3 }, nowMs)
+
+    const results = await ltm.byKey('higekiri', { entity: '膝丸' })
+    assert.strictEqual(results.length, 1)
+    assert.ok(results[0].content.includes('膝丸'))
+  })
+
+  await runAsync('createLongTermMemory: archiveLtm removes entry', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const entry = await ltm.upsertLtm('higekiri', { kind: 'event', content: '要删的', keywords: [], entities: [], importance: 0.1 }, nowMs)
+    assert.ok(entry.id)
+
+    await ltm.archiveLtm(entry.id)
+    const rows = ctx.database._store['life_sim_ltm'] || []
+    const stillExists = rows.find((r) => r.id === entry.id)
+    assert.ok(!stillExists, 'entry should be removed after archiveLtm')
+  })
+
+  await runAsync('createLongTermMemory: prune removes low-importance low-refcount entries', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const e1 = await ltm.upsertLtm('higekiri', { kind: 'event', content: '低价值', keywords: [], entities: [], importance: 0.1, refCount: 0 }, nowMs)
+    const e2 = await ltm.upsertLtm('higekiri', { kind: 'event', content: '高价值', keywords: [], entities: [], importance: 0.8, refCount: 5 }, nowMs)
+
+    const pruned = await ltm.prune('higekiri', 0.25)
+    assert.strictEqual(pruned, 1, 'should prune exactly one entry')
+    const rows = ctx.database._store['life_sim_ltm'] || []
+    assert.ok(!rows.find((r) => r.id === e1.id), 'low-importance entry should be removed')
+    assert.ok(rows.find((r) => r.id === e2.id), 'high-importance entry should remain')
+  })
+
+  await runAsync('createLongTermMemory: prune does not remove entry with high refCount', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    // importance < threshold but refCount > 1 → keep
+    await ltm.upsertLtm('higekiri', { kind: 'event', content: '低价值但多引用', keywords: [], entities: [], importance: 0.1, refCount: 5 }, nowMs)
+
+    const pruned = await ltm.prune('higekiri', 0.25)
+    assert.strictEqual(pruned, 0, 'should not prune high-refCount entry')
+  })
+
+  await runAsync('createLongTermMemory: touch increments refCount and updates lastAccessedAt', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+    const entry = await ltm.upsertLtm('higekiri', { kind: 'event', content: '测试', keywords: [], entities: [], importance: 0.5, refCount: 2 }, nowMs)
+
+    const touchMs = nowMs + 5000
+    await ltm.touch(entry.id, touchMs)
+    const rows = ctx.database._store['life_sim_ltm']
+    const row = rows.find((r) => r.id === entry.id)
+    assert.ok(row, 'row should exist')
+    assert.strictEqual(row.refCount, 3, 'refCount should be incremented')
+    assert.ok(+row.lastAccessedAt >= touchMs - 100, 'lastAccessedAt should be updated')
+  })
+
+  await runAsync('createLongTermMemory: relationship returns null when none exists', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const rel = await ltm.relationship('higekiri', '膝丸')
+    assert.strictEqual(rel, null, 'should return null for missing relationship')
+  })
+
+  await runAsync('createLongTermMemory: upsertRelationship creates and retrieves relationship', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+
+    await ltm.upsertRelationship('higekiri', '膝丸', {
+      summary: '弟弟，关系好',
+      openThreads: ['对练约定'],
+      tone: '亲密',
+      lastChatId: 'chat-001',
+    }, nowMs)
+
+    const rel = await ltm.relationship('higekiri', '膝丸')
+    assert.ok(rel, 'should find the relationship')
+    assert.strictEqual(rel.summary, '弟弟，关系好')
+    assert.deepStrictEqual(rel.openThreads, ['对练约定'])
+    assert.strictEqual(rel.tone, '亲密')
+  })
+
+  await runAsync('createLongTermMemory: upsertRelationship updates existing', async () => {
+    const ctx = makeFakeCtx()
+    const ltm = createLongTermMemory(ctx)
+    const nowMs = Date.UTC(2026, 5, 1, 10, 0, 0)
+
+    await ltm.upsertRelationship('higekiri', '膝丸', { summary: '初始摘要', openThreads: [], tone: '普通' }, nowMs)
+    await ltm.upsertRelationship('higekiri', '膝丸', { summary: '更新摘要', openThreads: ['新约定'], tone: '亲密' }, nowMs + 1000)
+
+    const rel = await ltm.relationship('higekiri', '膝丸')
+    assert.strictEqual(rel.summary, '更新摘要', 'summary should be updated')
+    assert.deepStrictEqual(rel.openThreads, ['新约定'])
+
+    // Should only have one row in DB
+    const rows = ctx.database._store['life_sim_relationship'] || []
+    assert.strictEqual(rows.length, 1, 'should only have one relationship row')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: memory-consolidate.js — pure clusterScore
+  // ---------------------------------------------------------------------------
+
+  const { clusterScore, clusterEvents, parseConsolidateOps, tomorrowOf } = require('./memory-consolidate')
+
+  const nowMs = Date.UTC(2026, 5, 1, 12, 0, 0)  // 2026-06-01 12:00:00 UTC
+
+  // clusterScore basics
+  test('clusterScore: keyword cluster scores higher than month cluster', () => {
+    const kwCluster = {
+      reason: 'keyword',
+      events: [
+        { importance: 0.7, ts: new Date(nowMs - 60000) },
+        { importance: 0.6, ts: new Date(nowMs - 30000) },
+      ],
+      nowMs,
+    }
+    const monthCluster = {
+      reason: 'month',
+      events: [
+        { importance: 0.7, ts: new Date(nowMs - 60000) },
+        { importance: 0.6, ts: new Date(nowMs - 30000) },
+      ],
+      nowMs,
+    }
+    assert.ok(clusterScore(kwCluster) > clusterScore(monthCluster), 'keyword cluster should outscore month cluster')
+  })
+
+  test('clusterScore: higher importance cluster scores higher (same reason)', () => {
+    const highImpCluster = {
+      reason: 'keyword',
+      events: [{ importance: 0.9, ts: new Date(nowMs - 1000) }],
+      nowMs,
+    }
+    const lowImpCluster = {
+      reason: 'keyword',
+      events: [{ importance: 0.1, ts: new Date(nowMs - 1000) }],
+      nowMs,
+    }
+    assert.ok(clusterScore(highImpCluster) > clusterScore(lowImpCluster), 'higher importance should score higher')
+  })
+
+  test('clusterScore: more recent cluster scores higher (same reason, same importance)', () => {
+    const recentCluster = {
+      reason: 'keyword',
+      events: [{ importance: 0.5, ts: new Date(nowMs - 1000) }],
+      nowMs,
+    }
+    const olderCluster = {
+      reason: 'keyword',
+      events: [{ importance: 0.5, ts: new Date(nowMs - 100000) }],
+      nowMs,
+    }
+    assert.ok(clusterScore(recentCluster) > clusterScore(olderCluster), 'more recent cluster should score higher')
+  })
+
+  test('clusterScore: null importance → importanceScore = 0.5 (fallback)', () => {
+    const c = {
+      reason: 'keyword',
+      events: [{ importance: null, ts: new Date(nowMs - 1000) }],
+      nowMs,
+    }
+    // Expected: 4*10 + 0.5 + recency ≈ 40.5+something
+    const score = clusterScore(c)
+    assert.ok(score >= 40, 'score should be at least 40 with keyword reason')
+    assert.ok(score < 42, 'score should be less than 42 (importance portion is 0.5)')
+  })
+
+  test('clusterScore: empty cluster → 0', () => {
+    assert.strictEqual(clusterScore({ reason: 'keyword', events: [], nowMs }), 0)
+  })
+
+  test('clusterScore: null cluster → 0', () => {
+    assert.strictEqual(clusterScore(null), 0)
+  })
+
+  test('clusterScore: no nowMs → recencyScore 0 but still computes reason+importance', () => {
+    const c = {
+      reason: 'keyword',
+      events: [{ importance: 0.8 }],
+    }
+    const score = clusterScore(c)
+    assert.ok(score >= 40, 'should still score from reason and importance')
+    assert.ok(score < 41.5, 'no recency contribution expected')
+  })
+
+  test('clusterScore: reason order: keyword(4) > sentiment(3) > month(2) > fallback(1)', () => {
+    const makeCluster = (reason) => ({
+      reason,
+      events: [{ importance: 0.5 }],
+    })
+    const scores = ['keyword', 'sentiment', 'month', 'fallback'].map((r) => clusterScore(makeCluster(r)))
+    assert.ok(scores[0] > scores[1], 'keyword > sentiment')
+    assert.ok(scores[1] > scores[2], 'sentiment > month')
+    assert.ok(scores[2] > scores[3], 'month > fallback')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: memory-consolidate.js — pure clusterEvents
+  // ---------------------------------------------------------------------------
+
+  test('clusterEvents: empty → []', () => {
+    assert.deepStrictEqual(clusterEvents([]), [])
+  })
+
+  test('clusterEvents: null → []', () => {
+    assert.deepStrictEqual(clusterEvents(null), [])
+  })
+
+  test('clusterEvents: two events with ≥2 shared keywords cluster together', () => {
+    const events = [
+      { id: 1, title: '事件A', keywords: JSON.stringify(['锻刀', '练习场', '磨刀']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs - 3600000) },
+      { id: 2, title: '事件B', keywords: JSON.stringify(['锻刀', '磨刀', '研磨']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs - 1800000) },
+    ]
+    const clusters = clusterEvents(events)
+    assert.strictEqual(clusters.length, 1, 'should form one cluster')
+    assert.strictEqual(clusters[0].events.length, 2, 'both events should be in the cluster')
+    assert.strictEqual(clusters[0].reason, 'keyword')
+  })
+
+  test('clusterEvents: two events with only 1 shared keyword do NOT cluster by keyword (go to month)', () => {
+    const events = [
+      { id: 1, title: '事件A', keywords: JSON.stringify(['锻刀', '练习场']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+      { id: 2, title: '事件B', keywords: JSON.stringify(['锻刀', '茶道']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+    ]
+    const clusters = clusterEvents(events)
+    // They share 1 keyword (锻刀), same month → cluster by month
+    assert.ok(clusters.length <= 2, 'should not form separate keyword clusters')
+  })
+
+  test('clusterEvents: unrelated events form separate clusters', () => {
+    const events = [
+      { id: 1, title: '事件A', keywords: JSON.stringify(['锻刀', '练习场', '铁砧']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+      { id: 2, title: '事件B', keywords: JSON.stringify(['茶道', '茶室', '抹茶']), participants: '[]', day: '2026-07-01', ts: new Date(nowMs + 86400000 * 30) },
+    ]
+    const clusters = clusterEvents(events)
+    assert.strictEqual(clusters.length, 2, 'unrelated events should form separate clusters')
+  })
+
+  test('clusterEvents: each event is in exactly one cluster', () => {
+    const events = [
+      { id: 1, keywords: JSON.stringify(['a', 'b', 'c']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+      { id: 2, keywords: JSON.stringify(['a', 'b', 'd']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+      { id: 3, keywords: JSON.stringify(['x', 'y', 'z']), participants: '[]', day: '2026-07-01', ts: new Date(nowMs + 86400000 * 30) },
+    ]
+    const clusters = clusterEvents(events)
+    let total = 0
+    for (const c of clusters) total += c.events.length
+    assert.strictEqual(total, 3, 'total events across clusters should equal input length')
+  })
+
+  test('clusterEvents: single event forms a fallback cluster when no keywords', () => {
+    const events = [
+      { id: 1, title: '无关键词事件', keywords: JSON.stringify([]), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+    ]
+    const clusters = clusterEvents(events)
+    assert.strictEqual(clusters.length, 1)
+    assert.strictEqual(clusters[0].reason, 'fallback')
+  })
+
+  test('clusterEvents: three events all sharing ≥2 keywords → one cluster', () => {
+    const events = [
+      { id: 1, keywords: JSON.stringify(['锻刀', '研磨', '打铁']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs) },
+      { id: 2, keywords: JSON.stringify(['锻刀', '研磨', '打磨']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs + 1000) },
+      { id: 3, keywords: JSON.stringify(['研磨', '打铁', '铁砧']), participants: '[]', day: '2026-06-01', ts: new Date(nowMs + 2000) },
+    ]
+    const clusters = clusterEvents(events)
+    // Events 1&2 share 2 (锻刀,研磨), 2&3 share 1 (研磨), 1&3 share 2 (研磨,打铁)
+    // Greedy: event1 starts cluster, event2 joins (2 shared), event3 joins (shares 研磨,打铁 with event1)
+    assert.strictEqual(clusters.length, 1, 'all 3 should be in one cluster')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: memory-consolidate.js — pure parseConsolidateOps
+  // ---------------------------------------------------------------------------
+
+  test('parseConsolidateOps: valid JSON with all four actions → all parsed', () => {
+    const text = JSON.stringify({
+      operations: [
+        { action: 'keep',    memory: { kind: 'event', content: '日常锻刀', summary: '锻刀日', keywords: ['锻刀'], entities: [], importance: 0.7 } },
+        { action: 'update',  memoryId: 1, memory: { content: '更新后的内容', summary: '摘要', keywords: [], entities: [], importance: 0.8 } },
+        { action: 'merge',   sourceMemoryIds: [2, 3], memory: { kind: 'event', content: '合并记忆', summary: '合并', keywords: [], entities: [], importance: 0.6 } },
+        { action: 'archive', memoryId: 4, reason: '已过时' },
+      ],
+    })
+    const result = parseConsolidateOps(text)
+    assert.strictEqual(result.operations.length, 4)
+    assert.strictEqual(result.operations[0].action, 'keep')
+    assert.strictEqual(result.operations[1].action, 'update')
+    assert.strictEqual(result.operations[2].action, 'merge')
+    assert.strictEqual(result.operations[3].action, 'archive')
+  })
+
+  test('parseConsolidateOps: JSON embedded in prose → extracted', () => {
+    const text = '好的，这是整理结果：\n\n```json\n' + JSON.stringify({
+      operations: [
+        { action: 'keep', memory: { kind: 'event', content: '锻刀', summary: '', keywords: [], entities: [], importance: 0.5 } },
+      ],
+    }) + '\n```\n请参考。'
+    const result = parseConsolidateOps(text)
+    assert.ok(result.operations.length >= 1, 'should extract at least one operation from prose')
+  })
+
+  test('parseConsolidateOps: malformed ops dropped, valid ones kept', () => {
+    const text = JSON.stringify({
+      operations: [
+        { action: 'keep',    memory: { kind: 'event', content: '有效', summary: '', keywords: [], entities: [], importance: 0.5 } },
+        { action: 'invalid_action', memory: {} },  // unknown action → dropped
+        { action: 'merge',   sourceMemoryIds: [] }, // merge with empty sourceMemoryIds → dropped
+        { action: 'archive', memoryId: 5 },         // valid
+      ],
+    })
+    const result = parseConsolidateOps(text)
+    assert.strictEqual(result.operations.length, 2, 'should have 2 valid ops (keep + archive)')
+    assert.strictEqual(result.operations[0].action, 'keep')
+    assert.strictEqual(result.operations[1].action, 'archive')
+  })
+
+  test('parseConsolidateOps: garbage text → { operations: [] }', () => {
+    const result = parseConsolidateOps('这不是JSON格式的文本，随便写的。')
+    assert.deepStrictEqual(result, { operations: [] })
+  })
+
+  test('parseConsolidateOps: empty string → { operations: [] }', () => {
+    assert.deepStrictEqual(parseConsolidateOps(''), { operations: [] })
+  })
+
+  test('parseConsolidateOps: null → { operations: [] }', () => {
+    assert.deepStrictEqual(parseConsolidateOps(null), { operations: [] })
+  })
+
+  test('parseConsolidateOps: plain JSON array (not wrapped in object) → treated as ops', () => {
+    const text = JSON.stringify([
+      { action: 'keep', memory: { kind: 'event', content: '测试', summary: '', keywords: [], entities: [], importance: 0.5 } },
+    ])
+    const result = parseConsolidateOps(text)
+    assert.strictEqual(result.operations.length, 1)
+    assert.strictEqual(result.operations[0].action, 'keep')
+  })
+
+  test('parseConsolidateOps: merge without sourceMemoryIds → dropped', () => {
+    const text = JSON.stringify({
+      operations: [
+        { action: 'merge', memory: { kind: 'event', content: '合并', summary: '', keywords: [], entities: [], importance: 0.5 } },
+      ],
+    })
+    const result = parseConsolidateOps(text)
+    assert.strictEqual(result.operations.length, 0, 'merge without sourceMemoryIds should be dropped')
+  })
+
+  test('parseConsolidateOps: reason field preserved when present', () => {
+    const text = JSON.stringify({
+      operations: [
+        { action: 'archive', memoryId: 99, reason: '已无用' },
+      ],
+    })
+    const result = parseConsolidateOps(text)
+    assert.strictEqual(result.operations[0].reason, '已无用')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: tomorrowOf utility
+  // ---------------------------------------------------------------------------
+
+  test('tomorrowOf: 2026-06-01 → 2026-06-02', () => {
+    assert.strictEqual(tomorrowOf('2026-06-01'), '2026-06-02')
+  })
+
+  test('tomorrowOf: 2026-06-30 → 2026-07-01 (month rollover)', () => {
+    assert.strictEqual(tomorrowOf('2026-06-30'), '2026-07-01')
+  })
+
+  test('tomorrowOf: 2026-12-31 → 2027-01-01 (year rollover)', () => {
+    assert.strictEqual(tomorrowOf('2026-12-31'), '2027-01-01')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: createNightConsolidator — end-to-end glue test (fake ctx + fake model)
+  // ---------------------------------------------------------------------------
+
+  await runAsync('createNightConsolidator: consolidate processes cluster and marks events consolidated', async () => {
+    const ctx = makeFakeCtx()
+    const config = { consolidateModel: 'fake/model' }
+
+    // Pre-populate some events for the day
+    const day = '2026-06-01'
+    const ts = new Date(nowMs - 3600000)
+    await ctx.database.create('life_sim_event', {
+      presetId: 'higekiri', day, ts,
+      title: '锻刀',
+      narrative: '在练习场磨刀',
+      keywords: JSON.stringify(['锻刀', '研磨', '练习场']),
+      participants: '[]',
+      importance: 0.7,
+      consolidated: false,
+    })
+    await ctx.database.create('life_sim_event', {
+      presetId: 'higekiri', day, ts,
+      title: '磨刀石',
+      narrative: '找到一块好磨刀石',
+      keywords: JSON.stringify(['研磨', '磨刀', '锻刀']),
+      participants: '[]',
+      importance: 0.6,
+      consolidated: false,
+    })
+
+    const { createNightConsolidator } = require('./memory-consolidate')
+    const ltm = createLongTermMemory(ctx)
+
+    const fakeOps = JSON.stringify({
+      operations: [
+        {
+          action: 'keep',
+          memory: { kind: 'event', content: '锻刀磨刀石日记', summary: '今日锻刀', keywords: ['锻刀', '研磨'], entities: [], importance: 0.7 },
+          reason: '值得记住',
+        },
+      ],
+    })
+
+    const deps = {
+      getModel: async () => ({ invoke: async () => ({ content: fakeOps }) }),
+      invoke: async (m, _msgs) => {
+        const r = await m.invoke()
+        return r.content
+      },
+      ltm,
+      scheduler: { registerHandler: () => {} },
+    }
+
+    const consolidator = createNightConsolidator(ctx, config, deps)
+    const result = await consolidator.consolidate('higekiri', day, nowMs)
+
+    assert.strictEqual(result.clusters, 1, 'should form 1 cluster (shared 2 keywords)')
+    assert.strictEqual(result.processed, 2, 'should process 2 events')
+
+    // Check events are marked consolidated
+    const events = ctx.database._store['life_sim_event'] || []
+    const unconsolidated = events.filter((e) => e.presetId === 'higekiri' && e.day === day && !e.consolidated)
+    assert.strictEqual(unconsolidated.length, 0, 'all events should be marked consolidated')
+
+    // Check LTM was created
+    const ltmRows = ctx.database._store['life_sim_ltm'] || []
+    assert.ok(ltmRows.length >= 1, 'at least one LTM entry should be created')
+  })
+
+  await runAsync('createNightConsolidator: consolidate with no events → no crash, returns 0', async () => {
+    const ctx = makeFakeCtx()
+    const config = { consolidateModel: 'fake/model' }
+    const { createNightConsolidator } = require('./memory-consolidate')
+    const ltm = createLongTermMemory(ctx)
+    const deps = {
+      getModel: async () => ({ invoke: async () => ({ content: '{}' }) }),
+      invoke: async () => '{}',
+      ltm,
+      scheduler: { registerHandler: () => {} },
+    }
+    const consolidator = createNightConsolidator(ctx, config, deps)
+    const result = await consolidator.consolidate('higekiri', '2026-06-01', nowMs)
+    assert.strictEqual(result.processed, 0)
+    assert.strictEqual(result.clusters, 0)
+  })
+
+  await runAsync('createNightConsolidator: consolidate with model error → falls back, still marks consolidated', async () => {
+    const ctx = makeFakeCtx()
+    const config = { consolidateModel: 'fake/model' }
+    const day = '2026-06-01'
+    const ts = new Date(nowMs - 1000)
+
+    await ctx.database.create('life_sim_event', {
+      presetId: 'higekiri', day, ts,
+      title: '锻刀', narrative: '锻刀',
+      keywords: JSON.stringify(['锻刀']),
+      participants: '[]',
+      importance: 0.5,
+      consolidated: false,
+    })
+
+    const { createNightConsolidator } = require('./memory-consolidate')
+    const ltm = createLongTermMemory(ctx)
+    const deps = {
+      getModel: async () => { throw new Error('model unavailable') },
+      invoke: async () => { throw new Error('model unavailable') },
+      ltm,
+      scheduler: { registerHandler: () => {} },
+    }
+    const consolidator = createNightConsolidator(ctx, config, deps)
+    // Should not throw
+    const result = await consolidator.consolidate('higekiri', day, nowMs)
+    assert.strictEqual(result.processed, 1)
+
+    // Event should be consolidated even on model error
+    const events = ctx.database._store['life_sim_event'] || []
+    const unconsolidated = events.filter((e) => !e.consolidated)
+    assert.strictEqual(unconsolidated.length, 0, 'events should be marked consolidated even on model error')
+  })
+
+  await runAsync('createNightConsolidator: registerHandler wires scheduler', async () => {
+    const ctx = makeFakeCtx()
+    const config = { consolidateModel: 'fake/model' }
+    const { createNightConsolidator } = require('./memory-consolidate')
+    const ltm = createLongTermMemory(ctx)
+    const handlers = {}
+    const deps = {
+      getModel: async () => ({ invoke: async () => ({ content: '{"operations":[]}' }) }),
+      invoke: async (m) => (await m.invoke()).content,
+      ltm,
+      scheduler: {
+        registerHandler: (type, fn) => { handlers[type] = fn },
+      },
+    }
+    const consolidator = createNightConsolidator(ctx, config, deps)
+    consolidator.registerHandler()
+    assert.ok(typeof handlers['consolidate'] === 'function', 'consolidate handler should be registered')
+  })
+
+  await runAsync('createNightConsolidator: merge op archives source entries', async () => {
+    const ctx = makeFakeCtx()
+    const config = { consolidateModel: 'fake/model' }
+    const day = '2026-06-01'
+    const ts = new Date(nowMs - 1000)
+    const { createNightConsolidator } = require('./memory-consolidate')
+    const ltm = createLongTermMemory(ctx)
+
+    // Pre-populate 2 LTM entries that will be merged
+    const ltmNow = nowMs - 86400000
+    const e1 = await ltm.upsertLtm('higekiri', { kind: 'event', content: '旧记忆A', keywords: ['锻刀'], entities: [], importance: 0.5 }, ltmNow)
+    const e2 = await ltm.upsertLtm('higekiri', { kind: 'event', content: '旧记忆B', keywords: ['磨刀'], entities: [], importance: 0.4 }, ltmNow)
+
+    // Add one event to consolidate
+    await ctx.database.create('life_sim_event', {
+      presetId: 'higekiri', day, ts,
+      title: '锻刀大合并', narrative: '合并一天的锻刀记忆',
+      keywords: JSON.stringify(['锻刀', '磨刀', '研磨']),
+      participants: '[]', importance: 0.7, consolidated: false,
+    })
+
+    const mergeOps = JSON.stringify({
+      operations: [
+        {
+          action: 'merge',
+          sourceMemoryIds: [e1.id, e2.id],
+          memory: { kind: 'event', content: '合并后的记忆', summary: '锻刀与磨刀的合体', keywords: ['锻刀', '磨刀'], entities: [], importance: 0.8 },
+          reason: '同类合并',
+        },
+      ],
+    })
+
+    const deps = {
+      getModel: async () => ({ invoke: async () => ({ content: mergeOps }) }),
+      invoke: async (m) => (await m.invoke()).content,
+      ltm,
+      scheduler: { registerHandler: () => {} },
+    }
+
+    const consolidator = createNightConsolidator(ctx, config, deps)
+    await consolidator.consolidate('higekiri', day, nowMs)
+
+    const ltmRows = ctx.database._store['life_sim_ltm'] || []
+    // Source entries should be archived (removed)
+    assert.ok(!ltmRows.find((r) => r.id === e1.id), 'source e1 should be archived')
+    assert.ok(!ltmRows.find((r) => r.id === e2.id), 'source e2 should be archived')
+    // Merged entry should exist
+    assert.ok(ltmRows.find((r) => r.content === '合并后的记忆'), 'merged entry should exist')
   })
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
