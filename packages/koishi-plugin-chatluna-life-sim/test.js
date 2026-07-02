@@ -6230,6 +6230,220 @@ async function main() {
     assert.strictEqual(sent[0].text, '主君，还在么。', 'follow-up text is the rewritten one')
   })
 
+  // ---------------------------------------------------------------------------
+  // health.js: scanPresetTextForVars / createHealth + roll-roller.js:
+  // gatherPersonaWithSource 来源报告（§6.3 健康自检 + persona fallback 告警）
+  // ---------------------------------------------------------------------------
+
+  const { scanPresetTextForVars, createHealth } = require('./health')
+  const { gatherPersona, gatherPersonaWithSource, _resetPersonaWarned } = require('./roll-roller')
+  // createInject 已在上方 Task 13 区块解构过，这里只补 resolveVarNames
+  const { resolveVarNames } = require('./inject')
+
+  const FOUR_VARS = ['recent_life', 'life_state', 'today_plan', 'pending_thoughts']
+
+  // --- scanPresetTextForVars（纯逻辑）---
+
+  test('scanPresetTextForVars: 四变量全部命中', () => {
+    const text = '【近况】{recent_life}\n【此刻】{life_state}\n【今日计划】{today_plan}\n【想说的话】{pending_thoughts}'
+    const r = scanPresetTextForVars(text, FOUR_VARS)
+    assert.deepStrictEqual(r, {
+      recent_life: true, life_state: true, today_plan: true, pending_thoughts: true,
+    })
+  })
+
+  test('scanPresetTextForVars: 部分未命中 → false', () => {
+    const text = '人设正文。{recent_life} 与 {life_state} 有，其余没有。'
+    const r = scanPresetTextForVars(text, FOUR_VARS)
+    assert.strictEqual(r.recent_life, true)
+    assert.strictEqual(r.life_state, true)
+    assert.strictEqual(r.today_plan, false)
+    assert.strictEqual(r.pending_thoughts, false)
+  })
+
+  test('scanPresetTextForVars: 空文本 → 全 false', () => {
+    const r = scanPresetTextForVars('', FOUR_VARS)
+    assert.deepStrictEqual(Object.values(r), [false, false, false, false])
+  })
+
+  test('scanPresetTextForVars: 函数调用形式 {recent_life(10)} 也算命中', () => {
+    const r = scanPresetTextForVars('近况：{recent_life(10)}', ['recent_life'])
+    assert.strictEqual(r.recent_life, true)
+  })
+
+  test('scanPresetTextForVars: 带空白 { recent_life } 也算命中', () => {
+    const r = scanPresetTextForVars('近况：{ recent_life }', ['recent_life'])
+    assert.strictEqual(r.recent_life, true)
+  })
+
+  test('scanPresetTextForVars: 相似前缀名不误命中', () => {
+    const r = scanPresetTextForVars('{recent_life_extended}', ['recent_life'])
+    assert.strictEqual(r.recent_life, false)
+  })
+
+  test('scanPresetTextForVars: 非字符串输入按空文本处理（不炸）', () => {
+    const r = scanPresetTextForVars(null, ['recent_life'])
+    assert.strictEqual(r.recent_life, false)
+  })
+
+  // --- resolveVarNames ---
+
+  test('resolveVarNames: 默认四名 + config.varNames 覆盖合并', () => {
+    const def = resolveVarNames(null)
+    assert.strictEqual(def.recentLife, 'recent_life')
+    assert.strictEqual(def.pendingThoughts, 'pending_thoughts')
+    const over = resolveVarNames({ varNames: { recentLife: 'jinkuang' } })
+    assert.strictEqual(over.recentLife, 'jinkuang')
+    assert.strictEqual(over.lifeState, 'life_state')
+  })
+
+  // --- createHealth（fake deps 组装）---
+
+  await runAsync('createHealth: 组装 personaSource/injectRegistered/presetVars', async () => {
+    const health = createHealth({
+      gatherPersonaWithSource: async (pid) => ({ text: '人设：' + pid, source: 'service' }),
+      injectRegistered: () => true,
+      getPresetText: async () => '【近况】{recent_life}\n【此刻】{life_state}',
+      varNames: FOUR_VARS,
+    })
+    const h = await health.getHealth('higekiri')
+    assert.strictEqual(h.personaSource, 'service')
+    assert.strictEqual(h.injectRegistered, true)
+    assert.deepStrictEqual(h.presetVars, {
+      recent_life: true, life_state: true, today_plan: false, pending_thoughts: false,
+    })
+  })
+
+  await runAsync('createHealth: 读不到预设（null）→ presetVars 全 null', async () => {
+    const health = createHealth({
+      gatherPersonaWithSource: async () => ({ text: 'x', source: 'file' }),
+      injectRegistered: () => false,
+      getPresetText: async () => null,
+      varNames: FOUR_VARS,
+    })
+    const h = await health.getHealth('higekiri')
+    assert.strictEqual(h.personaSource, 'file')
+    assert.strictEqual(h.injectRegistered, false)
+    assert.deepStrictEqual(h.presetVars, {
+      recent_life: null, life_state: null, today_plan: null, pending_thoughts: null,
+    })
+  })
+
+  await runAsync('createHealth: getPresetText 抛错 → 全 null 不炸', async () => {
+    const health = createHealth({
+      gatherPersonaWithSource: async () => ({ text: 'x', source: 'default' }),
+      injectRegistered: true,  // 也接受布尔直给
+      getPresetText: async () => { throw new Error('no preset service') },
+      varNames: ['recent_life'],
+    })
+    const h = await health.getHealth('kousetsu')
+    assert.strictEqual(h.personaSource, 'default')
+    assert.strictEqual(h.injectRegistered, true)
+    assert.deepStrictEqual(h.presetVars, { recent_life: null })
+  })
+
+  await runAsync('createHealth: deps 全缺省 → 安全默认（default/false/{}）', async () => {
+    const health = createHealth({})
+    const h = await health.getHealth('anyone')
+    assert.strictEqual(h.personaSource, 'default')
+    assert.strictEqual(h.injectRegistered, false)
+    assert.deepStrictEqual(h.presetVars, {})
+  })
+
+  // --- gatherPersonaWithSource 三级来源报告 ---
+
+  await runAsync('gatherPersonaWithSource: service 级（worldbook 服务命中）', async () => {
+    _resetPersonaWarned()
+    const warns = []
+    const ctx = {
+      logger: () => ({ warn: (...a) => warns.push(a) }),
+      chatluna_worldbook: {
+        query: async ({ purpose, presetId }) => {
+          assert.strictEqual(purpose, 'persona')
+          return [{ content: '髭切：源氏重宝，太刀。' }]
+        },
+      },
+    }
+    const r = await gatherPersonaWithSource('higekiri', ctx, {})
+    assert.strictEqual(r.source, 'service')
+    assert.strictEqual(r.text, '髭切：源氏重宝，太刀。')
+    assert.strictEqual(warns.length, 0, 'service 级不告警')
+  })
+
+  await runAsync('gatherPersonaWithSource: file 级 → warn 一次/preset（去重）', async () => {
+    _resetPersonaWarned()
+    const fs = require('fs')
+    const os = require('os')
+    const path = require('path')
+    const tmpFile = path.join(os.tmpdir(), 'life-sim-test-persona-' + process.pid + '.json')
+    fs.writeFileSync(tmpFile, JSON.stringify([{ content: '膝丸：源氏重宝，髭切之弟。' }]))
+    try {
+      const warns = []
+      const ctx = { logger: () => ({ warn: (...a) => warns.push(a) }) }
+      const config = { worldbooks: [{ purpose: 'persona', path: tmpFile }] }
+
+      const r1 = await gatherPersonaWithSource('hizamaru', ctx, config)
+      assert.strictEqual(r1.source, 'file')
+      assert.strictEqual(r1.text, '膝丸：源氏重宝，髭切之弟。')
+      assert.strictEqual(warns.length, 1, 'file 级 warn 一次')
+
+      const r2 = await gatherPersonaWithSource('hizamaru', ctx, config)
+      assert.strictEqual(r2.source, 'file')
+      assert.strictEqual(warns.length, 1, '同 preset 再落 file 级不再 warn（Set 去重）')
+
+      await gatherPersonaWithSource('kousetsu', ctx, config)
+      assert.strictEqual(warns.length, 2, '不同 preset 各自 warn 一次')
+    } finally {
+      fs.unlinkSync(tmpFile)
+    }
+  })
+
+  await runAsync('gatherPersonaWithSource: default 级 → 醒目人设缺失 warn', async () => {
+    _resetPersonaWarned()
+    const warns = []
+    const ctx = { logger: () => ({ warn: (...a) => warns.push(a) }) }
+    const r = await gatherPersonaWithSource('higekiri', ctx, {})
+    assert.strictEqual(r.source, 'default')
+    assert.ok(r.text.includes('higekiri'), '默认串包含 presetId')
+    assert.strictEqual(warns.length, 1)
+    assert.ok(String(warns[0][0]).includes('人设缺失'), 'default 级 warn 提"人设缺失"')
+
+    await gatherPersonaWithSource('higekiri', ctx, {})
+    assert.strictEqual(warns.length, 1, 'default 级同样去重')
+  })
+
+  await runAsync('gatherPersona: 既有签名兼容 — 仍返回字符串', async () => {
+    _resetPersonaWarned()
+    const persona = await gatherPersona('higekiri', null, null)
+    assert.strictEqual(typeof persona, 'string')
+    assert.ok(persona.includes('higekiri'))
+  })
+
+  // --- createInject.register() 返回注册状态（非破坏性扩展）---
+
+  await runAsync('createInject: register() renderer 缺失 → false；存在 → true', async () => {
+    const noRenderer = createInject(
+      { logger: () => ({ warn: () => {} }), chatluna: undefined },
+      { presets: ['higekiri'] },
+      {}
+    )
+    assert.strictEqual(noRenderer.register(), false)
+
+    let registered = 0
+    const okCtx = {
+      logger: () => ({ warn: () => {} }),
+      effect: (fn) => fn(),
+      chatluna: {
+        promptRenderer: {
+          registerFunctionProvider: () => { registered++; return () => {} },
+        },
+      },
+    }
+    const withRenderer = createInject(okCtx, { presets: ['higekiri'] }, {})
+    assert.strictEqual(withRenderer.register(), true)
+    assert.strictEqual(registered, 4, '四个 provider 都注册')
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }

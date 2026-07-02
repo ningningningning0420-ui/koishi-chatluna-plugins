@@ -280,31 +280,70 @@ function sampleCandidate(candidates, chosenIndex, r) {
 // designed to work with fake ctx for the roller glue test)
 // ---------------------------------------------------------------------------
 
+// §6.3 persona fallback 告警去重 — module 级 Set，一次/preset/级别。
+// key = presetId + ' ' + level（'file' | 'default'）。
+const _personaWarned = new Set()
+
+/** Reset the warn-dedup set (test isolation only). */
+function _resetPersonaWarned() {
+  _personaWarned.clear()
+}
+
 /**
- * Gather the persona canon string for a presetId.
+ * Warn once per preset per fallback level (§6.3/§5.5e).
+ * file 级：worldbook 服务不可用，降级到本地文件（同源要求告警）。
+ * default 级：更醒目——人设缺失，角色跑在通用模板上。
+ */
+function _personaWarnOnce(logger, presetId, level) {
+  const key = presetId + ' ' + level
+  if (_personaWarned.has(key)) return
+  _personaWarned.add(key)
+  if (level === 'file') {
+    logger.warn(
+      '[persona] %s: chatluna_worldbook 服务不可用，人设降级到 config.worldbooks 本地文件'
+      + '（§5.5e 同源要求——留意 sim 与主聊 canon 漂移）',
+      presetId
+    )
+  } else {
+    logger.warn(
+      '[persona] %s: 人设缺失！service 与 file 都不可用，已降级到通用默认串——'
+      + '事件在长但角色没有个性。请检查 chatluna_worldbook 服务或 config.worldbooks 配置。',
+      presetId
+    )
+  }
+}
+
+/**
+ * Gather the persona canon for a presetId, REPORTING which fallback level
+ * was actually used (§6.3 健康自检).
  *
- * Priority:
- * 1. If ctx has a chatluna_worldbook service with a query method, query it
- *    for purpose:'persona' entries and return their content joined.
- * 2. If config.worldbooks is an array, find the first entry with purpose='persona'
- *    and attempt to load it from the file system (only in runtime, not offline).
- * 3. Fall back to a minimal default persona string.
+ * Priority (§5.5e 三级降级):
+ * 1. 'service' — ctx.chatluna_worldbook.query({purpose:'persona'}) hits.
+ * 2. 'file'    — config.worldbooks persona file loads (runtime degrade; warns
+ *                once per preset).
+ * 3. 'default' — minimal generic persona string (人设缺失; louder warn, once
+ *                per preset).
  *
  * @param {string} presetId
  * @param {object} ctx        Koishi context (may be a fake ctx in tests)
  * @param {object} config     Plugin config
- * @returns {Promise<string>}
+ * @returns {Promise<{text: string, source: 'service'|'file'|'default'}>}
  */
-async function gatherPersona(presetId, ctx, config) {
+async function gatherPersonaWithSource(presetId, ctx, config) {
+  const logger = (ctx && typeof ctx.logger === 'function')
+    ? ctx.logger('life-sim:persona')
+    : { warn: () => {} }
+
   // Try worldbook service (Task 7 worldbook plugin)
   try {
     if (ctx && ctx.chatluna_worldbook && typeof ctx.chatluna_worldbook.query === 'function') {
       const entries = await ctx.chatluna_worldbook.query({ purpose: 'persona', presetId })
       if (Array.isArray(entries) && entries.length > 0) {
-        return entries
+        const text = entries
           .map((e) => (typeof e.content === 'string' ? e.content : (e.entry || '')))
           .filter(Boolean)
           .join('\n\n')
+        return { text, source: 'service' }
       }
     }
   } catch (_) {
@@ -328,10 +367,12 @@ async function gatherPersona(presetId, ctx, config) {
         const json = JSON.parse(raw)
         const entries = Array.isArray(json) ? json : (json.entries || [])
         if (entries.length > 0) {
-          return entries
+          const text = entries
             .map((e) => (typeof e.content === 'string' ? e.content : ''))
             .filter(Boolean)
             .join('\n\n')
+          _personaWarnOnce(logger, presetId, 'file')
+          return { text, source: 'file' }
         }
       } catch (_) {
         // file not found or parse error — fall through
@@ -339,10 +380,29 @@ async function gatherPersona(presetId, ctx, config) {
     }
   }
 
-  // Default persona string
-  return presetId
+  // Default persona string — 人设缺失
+  _personaWarnOnce(logger, presetId, 'default')
+  const text = presetId
     ? '角色：' + presetId + '（人设文件未加载，请按角色一贯人格行事）'
     : '（角色人设未加载，请按角色一贯人格行事）'
+  return { text, source: 'default' }
+}
+
+/**
+ * Gather the persona canon string for a presetId.
+ *
+ * Backward-compatible wrapper around gatherPersonaWithSource — same三级降级,
+ * returns just the text (既有调用方签名不变). Source-level warns fire inside
+ * gatherPersonaWithSource.
+ *
+ * @param {string} presetId
+ * @param {object} ctx        Koishi context (may be a fake ctx in tests)
+ * @param {object} config     Plugin config
+ * @returns {Promise<string>}
+ */
+async function gatherPersona(presetId, ctx, config) {
+  const { text } = await gatherPersonaWithSource(presetId, ctx, config)
+  return text
 }
 
 // ---------------------------------------------------------------------------
@@ -699,8 +759,11 @@ module.exports = {
   sampleCandidate,
   // Async helper (used by glue; also exported for index.js Task 14)
   gatherPersona,
+  // §6.3 来源报告变体（健康自检用；gatherPersona 的实际实现）
+  gatherPersonaWithSource,
   // Glue factory
   createRoller,
   // Internal (exported for testing)
   _extractJson,
+  _resetPersonaWarned,
 }

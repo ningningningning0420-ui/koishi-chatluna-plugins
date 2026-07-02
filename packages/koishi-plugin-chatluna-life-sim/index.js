@@ -25,8 +25,9 @@ const { createRoutineAuthor } = require('./schedule-routine')
 const { createAssignmentQueue } = require('./schedule-assignment')
 const { createPlanner } = require('./schedule-planner')
 const { createProactiveBridge } = require('./proactive')
-const { createInject, updateMood } = require('./inject')
-const { createRoller, gatherPersona } = require('./roll-roller')
+const { createInject, updateMood, resolveVarNames } = require('./inject')
+const { createRoller, gatherPersona, gatherPersonaWithSource } = require('./roll-roller')
+const { createHealth } = require('./health')
 const { getModel, invoke } = require('./model')
 
 exports.name = 'chatluna-life-sim'
@@ -240,6 +241,91 @@ exports.apply = (ctx, config) => {
     resolveTarget: (_session) => '审神者',
   })
 
+  // ── §6.3 健康自检 ──
+  // 针对静默失败面：persona 三级降级无感知 + promptRenderer 缺失只 warn 一条。
+  // inject.register() 的注册结果存在这里（ready 时赋值），health 经闭包读取。
+  let _injectRegistered = false
+
+  const _varNames = resolveVarNames(config)
+  const _varNameList = [
+    _varNames.recentLife,
+    _varNames.lifeState,
+    _varNames.todayPlan,
+    _varNames.pendingThoughts,
+  ]
+
+  // best-effort 读 chatluna 预设原文：PresetService.getPreset(keyword, false)
+  // → ComputedRef<PresetTemplate>（.value.rawText）。读不到 → null（health 报 unknown）。
+  async function _getPresetText(presetId) {
+    try {
+      const svc = ctx.chatluna && ctx.chatluna.preset
+      if (!svc || typeof svc.getPreset !== 'function') return null
+      const ref = svc.getPreset(presetId, false)
+      // ComputedRef 需要 .value；兼容直接返回 template 的实现
+      const template = (ref && typeof ref === 'object' && 'value' in ref) ? ref.value : ref
+      if (template && typeof template.rawText === 'string') return template.rawText
+      return null
+    } catch (_) {
+      return null
+    }
+  }
+
+  const health = createHealth({
+    gatherPersonaWithSource: (presetId) => gatherPersonaWithSource(presetId, ctx, config),
+    injectRegistered: () => _injectRegistered,
+    getPresetText: _getPresetText,
+    varNames: _varNameList,
+  })
+
+  // 打一条 per-preset 健康日志（ready 时调用）
+  async function _logHealth(presetId) {
+    try {
+      const h = await health.getHealth(presetId)
+      const varKeys = Object.keys(h.presetVars)
+      const varsDesc = varKeys.map((k) => {
+        const v = h.presetVars[k]
+        return k + '=' + (v === null ? 'unknown' : (v ? 'ok' : 'MISSING'))
+      }).join(' ')
+      logger.info('[health] %s: persona=%s inject=%s vars: %s',
+        presetId, h.personaSource,
+        h.injectRegistered ? 'registered' : 'NOT-REGISTERED',
+        varsDesc || '(none)')
+
+      const allUnknown = varKeys.length > 0 && varKeys.every((k) => h.presetVars[k] === null)
+      if (allUnknown) {
+        logger.info('[health] %s: 无法读预设，请人工确认四变量已引用', presetId)
+      }
+      const missing = varKeys.filter((k) => h.presetVars[k] === false)
+      if (missing.length > 0) {
+        logger.warn('[health] %s: 预设文本未引用变量：%s —— provider 注册了但预设不引用等于白装（见 README 接入指南）',
+          presetId, missing.join(', '))
+      }
+      if (!h.injectRegistered) {
+        logger.warn('[health] %s: promptRenderer 注入未注册 —— 事件在长但聊天里不会出现任何生活上下文', presetId)
+      }
+    } catch (e) {
+      logger.warn('[life-sim] health check error for %s: %s', presetId, e && e.message)
+    }
+  }
+
+  // console 事件 life-sim/getHealth（同 memory-curator 面板端点模式：
+  // ctx.inject(['console']) 作用域内 addListener；console 服务不在时整块不生效）
+  ctx.inject(['console'], (ctx2) => {
+    ctx2.console.addListener('life-sim/getHealth', async (params) => {
+      const one = params && params.preset
+      const list = one ? [one] : ((config && config.presets) || [])
+      const out = {}
+      for (const presetId of list) {
+        try {
+          out[presetId] = await health.getHealth(presetId)
+        } catch (e) {
+          out[presetId] = { error: (e && e.message) || 'getHealth failed' }
+        }
+      }
+      return out
+    })
+  })
+
   // ── EventRoller ──
   // onShare: after a roll, pass want_to_share to proactive bridge.
   // updateMood: applied after roll persists next_state (in handler below).
@@ -293,7 +379,8 @@ exports.apply = (ctx, config) => {
 
     // Register prompt injection providers.
     // Must happen after promptRenderer is available (it is, since chatluna is injected).
-    inject.register()
+    // 注册结果存住给 §6.3 健康自检（true=四 provider 注册；false=promptRenderer 缺失）。
+    _injectRegistered = inject.register() === true
 
     // Process pending tasks from DB (drop overdue, fire slightly-late, arm timers).
     await scheduler.onReady()
@@ -323,6 +410,12 @@ exports.apply = (ctx, config) => {
       } catch (e) {
         logger.warn('[life-sim] ready bootstrap error for %s: %s', presetId, e && e.message)
       }
+    }
+
+    // §6.3 健康自检：按 preset 打一条健康日志
+    // （personaSource / injectRegistered / presetVars 摘要；异常降级不阻塞 ready）
+    for (const presetId of presets) {
+      await _logHealth(presetId)
     }
   })
 
@@ -533,6 +626,7 @@ exports.apply = (ctx, config) => {
   exports._thoughtBuffer = thoughtBuffer
   exports._inject = inject
   exports._proactive = proactive
+  exports._health = health
 }
 
 // ── Internal: compute unix-ms of next sleep hour (config.sleepHour) ──

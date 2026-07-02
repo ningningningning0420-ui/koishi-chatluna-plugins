@@ -14,6 +14,10 @@
 // Glue (needs ctx + deps, not tested offline):
 //   createInject(ctx, config, deps)    → { register() }
 //     register() calls ctx.chatluna.promptRenderer.registerFunctionProvider for 4 vars.
+//     Returns true on success, false when promptRenderer is missing（§6.3 健康自检
+//     要能拿到注册状态——index.js 存住传给 health）。
+//   resolveVarNames(config)            → {recentLife, lifeState, todayPlan, pendingThoughts}
+//     默认四变量名 + config.varNames 覆盖合并（inject 与 health 共用，别两处漂移）。
 //
 // Design refs: §4.6 (注入), §5.2 (life-state), §7 (心情波动)
 
@@ -263,6 +267,27 @@ function updateMood(lifeState, event) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the four injection variable names (defaults + config.varNames override).
+ *
+ * Shared between createInject and the §6.3 health check (index.js) so the two
+ * never disagree about what names to register/scan for. Pure function.
+ *
+ * @param {object|null} config  Plugin config ({ varNames? })
+ * @returns {{recentLife: string, lifeState: string, todayPlan: string, pendingThoughts: string}}
+ */
+function resolveVarNames(config) {
+  return Object.assign(
+    {
+      recentLife:      'recent_life',
+      lifeState:       'life_state',
+      todayPlan:       'today_plan',
+      pendingThoughts: 'pending_thoughts',
+    },
+    (config && config.varNames) || {}
+  )
+}
+
+/**
  * Create the PromptProvider injector.
  *
  * @param {object} ctx      Koishi context with optional ctx.chatluna.promptRenderer
@@ -281,15 +306,7 @@ function createInject(ctx, config, deps) {
   const logger = ctx.logger ? ctx.logger('chatluna-life-sim:inject') : console
 
   // Variable name configuration — allow override via config.varNames
-  const varNames = Object.assign(
-    {
-      recentLife:      'recent_life',
-      lifeState:       'life_state',
-      todayPlan:       'today_plan',
-      pendingThoughts: 'pending_thoughts',
-    },
-    (config && config.varNames) || {}
-  )
+  const varNames = resolveVarNames(config)
 
   // Derive presetId from session.  In P1 (single-preset), fall back to config.presets[0].
   // If chatluna_living_memory service is available and has resolvePresetId, use it.
@@ -329,6 +346,12 @@ function createInject(ctx, config, deps) {
     return y + '-' + m + '-' + day
   }
 
+  /**
+   * Register the 4 function providers on ctx.chatluna.promptRenderer.
+   * @returns {boolean}  true = registered; false = promptRenderer missing
+   *                     （非破坏性扩展：既有调用方忽略返回值不受影响；
+   *                       §6.3 健康自检靠这个布尔判断"注入是否静默失效"）
+   */
   function register() {
     // Guard: promptRenderer must be present
     const renderer = ctx.chatluna && ctx.chatluna.promptRenderer
@@ -336,7 +359,7 @@ function createInject(ctx, config, deps) {
       logger.warn
         ? logger.warn('[inject] ctx.chatluna.promptRenderer not available — skipping provider registration')
         : console.warn('[inject] ctx.chatluna.promptRenderer not available — skipping provider registration')
-      return
+      return false
     }
 
     // 1. {recent_life}
@@ -431,6 +454,8 @@ function createInject(ctx, config, deps) {
         }
       )
     )
+
+    return true
   }
 
   return { register }
@@ -448,6 +473,7 @@ module.exports = {
   renderTodayPlan,
   renderPendingThoughts,
   updateMood,
+  resolveVarNames,
   // Glue factory
   createInject,
 }
