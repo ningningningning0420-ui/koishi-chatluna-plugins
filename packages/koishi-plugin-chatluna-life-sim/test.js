@@ -5353,6 +5353,476 @@ async function main() {
     assert.ok(ltmRows.find((r) => r.content === '合并后的记忆'), 'merged entry should exist')
   })
 
+  // =========================================================================
+  // Task 13: inject.js — PromptProvider pure helpers + updateMood
+  // =========================================================================
+
+  const {
+    renderRecentLife,
+    renderLifeState,
+    renderTodayPlan,
+    renderPendingThoughts,
+    updateMood,
+    createInject,
+  } = require('./inject')
+
+  // ---- renderRecentLife ----
+
+  test('renderRecentLife: empty array → empty string', () => {
+    assert.strictEqual(renderRecentLife([], 5), '')
+  })
+
+  test('renderRecentLife: null → empty string', () => {
+    assert.strictEqual(renderRecentLife(null, 5), '')
+  })
+
+  test('renderRecentLife: single event with title and mood', () => {
+    const events = [{ title: '午后锻刀', mood: '专注' }]
+    const result = renderRecentLife(events, 5)
+    assert.ok(result.includes('午后锻刀'), 'should include title')
+    assert.ok(result.includes('专注'), 'should include mood')
+  })
+
+  test('renderRecentLife: caps at n events', () => {
+    const events = [
+      { title: '事件1', mood: '好' },
+      { title: '事件2', mood: '累' },
+      { title: '事件3', mood: '饿' },
+    ]
+    const result = renderRecentLife(events, 2)
+    assert.ok(result.includes('事件1'), 'first event included')
+    assert.ok(result.includes('事件2'), 'second event included')
+    assert.ok(!result.includes('事件3'), 'third event excluded by cap')
+  })
+
+  test('renderRecentLife: n=0 → empty string', () => {
+    const events = [{ title: '午后锻刀', mood: '专注' }]
+    assert.strictEqual(renderRecentLife(events, 0), '')
+  })
+
+  test('renderRecentLife: event without mood → no parentheses', () => {
+    const events = [{ title: '磨刀' }]
+    const result = renderRecentLife(events, 5)
+    assert.ok(result.includes('磨刀'), 'should include title')
+    assert.ok(!result.includes('（）'), 'should not have empty mood parens')
+  })
+
+  test('renderRecentLife: event without title → (无标题)', () => {
+    const events = [{ mood: '开心' }]
+    const result = renderRecentLife(events, 5)
+    assert.ok(result.includes('（无标题）'), 'should show 无标题')
+    assert.ok(result.includes('开心'), 'should include mood')
+  })
+
+  test('renderRecentLife: multiple events → newline-separated', () => {
+    const events = [
+      { title: '早上读书', mood: '平静' },
+      { title: '午后练剑', mood: '专注' },
+    ]
+    const result = renderRecentLife(events, 5)
+    const lines = result.split('\n')
+    assert.strictEqual(lines.length, 2, 'should have 2 lines')
+  })
+
+  test('renderRecentLife: n omitted → renders all events', () => {
+    const events = [
+      { title: '事件A', mood: '好' },
+      { title: '事件B', mood: '累' },
+    ]
+    const result = renderRecentLife(events)
+    assert.ok(result.includes('事件A') && result.includes('事件B'), 'both events rendered')
+  })
+
+  // ---- renderLifeState ----
+
+  test('renderLifeState: null → empty string', () => {
+    assert.strictEqual(renderLifeState(null), '')
+  })
+
+  test('renderLifeState: full state → includes location, activity, mood, threads', () => {
+    const state = {
+      location: '刀部屋',
+      current_activity: '擦拭太刀',
+      mood: '慵懒',
+      open_threads: ['约好的对练', '要借还的书'],
+    }
+    const result = renderLifeState(state)
+    assert.ok(result.includes('刀部屋'), 'includes location')
+    assert.ok(result.includes('擦拭太刀'), 'includes activity')
+    assert.ok(result.includes('慵懒'), 'includes mood')
+    assert.ok(result.includes('约好的对练'), 'includes thread 1')
+    assert.ok(result.includes('要借还的书'), 'includes thread 2')
+  })
+
+  test('renderLifeState: missing location → 在某处', () => {
+    const state = { current_activity: '发呆', mood: 'neutral', open_threads: [] }
+    const result = renderLifeState(state)
+    assert.ok(result.includes('某处'), 'fallback location')
+  })
+
+  test('renderLifeState: missing mood → neutral', () => {
+    const state = { location: '庭院', current_activity: '散步', open_threads: [] }
+    const result = renderLifeState(state)
+    assert.ok(result.includes('neutral'), 'fallback mood')
+  })
+
+  test('renderLifeState: empty open_threads → no 未了的事 line', () => {
+    const state = { location: '大广间', current_activity: '开会', mood: '认真', open_threads: [] }
+    const result = renderLifeState(state)
+    assert.ok(!result.includes('未了的事'), 'no 未了 when empty threads')
+  })
+
+  test('renderLifeState: null open_threads → no 未了的事 line', () => {
+    const state = { location: '大广间', mood: '认真', open_threads: null }
+    const result = renderLifeState(state)
+    assert.ok(!result.includes('未了的事'), 'no 未了 when null threads')
+  })
+
+  test('renderLifeState: no activity field → graceful', () => {
+    const state = { location: '书房', mood: '沉静', open_threads: ['看书'] }
+    const result = renderLifeState(state)
+    assert.ok(result.includes('书房'), 'still shows location')
+    assert.ok(result.includes('沉静'), 'still shows mood')
+  })
+
+  // ---- renderTodayPlan ----
+
+  test('renderTodayPlan: null plan → empty string', () => {
+    assert.strictEqual(renderTodayPlan(null, 1000), '')
+  })
+
+  test('renderTodayPlan: empty blocks → empty string', () => {
+    assert.strictEqual(renderTodayPlan({ blocks: [] }, 1000), '')
+  })
+
+  test('renderTodayPlan: blocks rendered with labels and activities', () => {
+    const plan = {
+      blocks: [
+        { block: '上午', activity: '读书', start: 1000, end: 5000 },
+        { block: '午后', activity: '练剑', start: 5000, end: 9000 },
+      ],
+    }
+    const result = renderTodayPlan(plan, 500)
+    assert.ok(result.includes('上午'), 'includes 上午')
+    assert.ok(result.includes('读书'), 'includes 读书')
+    assert.ok(result.includes('午后'), 'includes 午后')
+    assert.ok(result.includes('练剑'), 'includes 练剑')
+  })
+
+  test('renderTodayPlan: current block marked with ▶', () => {
+    const plan = {
+      blocks: [
+        { block: '上午', activity: '读书', start: 1000, end: 5000 },
+        { block: '午后', activity: '练剑', start: 5000, end: 9000 },
+      ],
+    }
+    const result = renderTodayPlan(plan, 6000) // inside 午后 block
+    const lines = result.split('\n')
+    const currentLine = lines.find((l) => l.includes('练剑'))
+    assert.ok(currentLine && currentLine.startsWith('▶'), 'current block has ▶ prefix')
+    const otherLine = lines.find((l) => l.includes('读书'))
+    assert.ok(otherLine && !otherLine.startsWith('▶'), 'past block no ▶')
+  })
+
+  test('renderTodayPlan: nowMs at block boundary → correct current', () => {
+    const plan = {
+      blocks: [
+        { block: '上午', activity: 'A', start: 1000, end: 5000 },
+        { block: '午后', activity: 'B', start: 5000, end: 9000 },
+      ],
+    }
+    // nowMs = 5000: start of 午后, end of 上午 (end is exclusive)
+    const result = renderTodayPlan(plan, 5000)
+    const lines = result.split('\n')
+    const bLine = lines.find((l) => l.includes('B'))
+    assert.ok(bLine && bLine.startsWith('▶'), '午后 is current at its start')
+    const aLine = lines.find((l) => l.includes('A'))
+    assert.ok(aLine && !aLine.startsWith('▶'), '上午 is not current at its end')
+  })
+
+  test('renderTodayPlan: nowMs past all blocks → no current marker', () => {
+    const plan = {
+      blocks: [
+        { block: '上午', activity: 'A', start: 1000, end: 3000 },
+      ],
+    }
+    const result = renderTodayPlan(plan, 99999)
+    assert.ok(!result.includes('▶'), 'no ▶ when nowMs past all blocks')
+  })
+
+  // ---- renderPendingThoughts ----
+
+  test('renderPendingThoughts: null → empty string', () => {
+    assert.strictEqual(renderPendingThoughts(null), '')
+  })
+
+  test('renderPendingThoughts: empty array → empty string', () => {
+    assert.strictEqual(renderPendingThoughts([]), '')
+  })
+
+  test('renderPendingThoughts: single thought with urgency', () => {
+    const thoughts = [{ content: '想问膝丸借那本书', urgency: 'low' }]
+    const result = renderPendingThoughts(thoughts)
+    assert.ok(result.includes('想问膝丸借那本书'), 'includes content')
+    assert.ok(result.includes('[low]'), 'includes urgency')
+    assert.ok(result.startsWith('- '), 'starts with list marker')
+  })
+
+  test('renderPendingThoughts: thought without urgency → no brackets', () => {
+    const thoughts = [{ content: '随便一想' }]
+    const result = renderPendingThoughts(thoughts)
+    assert.ok(result.includes('随便一想'), 'includes content')
+    assert.ok(!result.includes('['), 'no urgency brackets')
+  })
+
+  test('renderPendingThoughts: multiple thoughts → newline-separated', () => {
+    const thoughts = [
+      { content: '想法A', urgency: 'low' },
+      { content: '想法B', urgency: 'high' },
+    ]
+    const result = renderPendingThoughts(thoughts)
+    const lines = result.split('\n')
+    assert.strictEqual(lines.length, 2, 'two lines')
+    assert.ok(lines[0].includes('想法A'), 'first thought first')
+    assert.ok(lines[1].includes('想法B'), 'second thought second')
+  })
+
+  test('renderPendingThoughts: thought with null content → (无内容)', () => {
+    const thoughts = [{ content: null, urgency: 'low' }]
+    const result = renderPendingThoughts(thoughts)
+    assert.ok(result.includes('（无内容）'), 'fallback for null content')
+  })
+
+  // ---- updateMood ----
+
+  test('updateMood: event.mood updates life-state.mood', () => {
+    const state = { presetId: 'higekiri', location: '刀部屋', mood: 'neutral', open_threads: [] }
+    const event = { title: '练剑', mood: '酣畅' }
+    const result = updateMood(state, event)
+    assert.strictEqual(result.mood, '酣畅', 'mood updated to event mood')
+  })
+
+  test('updateMood: input life-state not mutated', () => {
+    const state = { presetId: 'higekiri', mood: 'neutral', open_threads: [] }
+    const event = { mood: '开心' }
+    const result = updateMood(state, event)
+    assert.strictEqual(state.mood, 'neutral', 'original state unchanged')
+    assert.strictEqual(result.mood, '开心', 'returned state has new mood')
+    assert.notStrictEqual(result, state, 'new object returned')
+  })
+
+  test('updateMood: event without mood → mood preserved', () => {
+    const state = { presetId: 'higekiri', mood: '慵懒', open_threads: [] }
+    const event = { title: '发呆' }  // no mood field
+    const result = updateMood(state, event)
+    assert.strictEqual(result.mood, '慵懒', 'original mood preserved')
+  })
+
+  test('updateMood: event.mood = null → mood preserved', () => {
+    const state = { presetId: 'higekiri', mood: '认真', open_threads: [] }
+    const event = { mood: null }
+    const result = updateMood(state, event)
+    assert.strictEqual(result.mood, '认真', 'null mood → preserved')
+  })
+
+  test('updateMood: event.mood = empty string → mood preserved', () => {
+    const state = { presetId: 'higekiri', mood: '平静', open_threads: [] }
+    const event = { mood: '' }
+    const result = updateMood(state, event)
+    assert.strictEqual(result.mood, '平静', 'empty mood → preserved')
+  })
+
+  test('updateMood: event.mood = whitespace → mood preserved', () => {
+    const state = { presetId: 'higekiri', mood: '平静', open_threads: [] }
+    const event = { mood: '  ' }
+    const result = updateMood(state, event)
+    assert.strictEqual(result.mood, '平静', 'whitespace-only mood → preserved')
+  })
+
+  test('updateMood: other life-state fields preserved unchanged', () => {
+    const state = {
+      presetId: 'higekiri',
+      location: '刀部屋',
+      current_activity: '擦刀',
+      mood: 'neutral',
+      open_threads: ['线索A'],
+      recent_event_ids: [1, 2],
+    }
+    const event = { mood: '疲惫' }
+    const result = updateMood(state, event)
+    assert.strictEqual(result.presetId, 'higekiri', 'presetId preserved')
+    assert.strictEqual(result.location, '刀部屋', 'location preserved')
+    assert.strictEqual(result.current_activity, '擦刀', 'activity preserved')
+    assert.deepStrictEqual(result.open_threads, ['线索A'], 'threads preserved')
+    assert.deepStrictEqual(result.recent_event_ids, [1, 2], 'event ids preserved')
+    assert.strictEqual(result.mood, '疲惫', 'mood updated')
+  })
+
+  test('updateMood: null lifeState throws', () => {
+    assert.throws(() => updateMood(null, { mood: '好' }), /lifeState must be an object/)
+  })
+
+  test('updateMood: null event → mood preserved (event treated as empty)', () => {
+    const state = { mood: '沉稳', open_threads: [] }
+    const result = updateMood(state, null)
+    assert.strictEqual(result.mood, '沉稳', 'null event → mood preserved')
+  })
+
+  // ---- createInject (fake-ctx glue test) ----
+
+  await runAsync('createInject: register() with fake deps → recent_life provider returns rendered text', async () => {
+    const registrations = {}
+    const fakeRenderer = {
+      registerFunctionProvider: (name, fn) => {
+        registrations[name] = fn
+        return () => {}  // disposer
+      },
+    }
+    const fakeCtx = {
+      chatluna: { promptRenderer: fakeRenderer },
+      effect: (fn) => fn(),
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    }
+    const fakeConfig = { presets: ['higekiri'] }
+    const fakeDeps = {
+      recent: async (_pid, _n) => [
+        { title: '早锻刀', mood: '专注' },
+        { title: '午休', mood: '慵懒' },
+      ],
+      getState: async (_pid) => ({ location: '刀部屋', current_activity: '擦刀', mood: '专注', open_threads: [] }),
+      getPlan: async (_pid, _day) => ({
+        blocks: [
+          { block: '上午', activity: '读书', start: 0, end: 1000 },
+        ],
+      }),
+      recallThoughts: async (_pid, _target) => [
+        { content: '想告诉主人今天天气很好', urgency: 'low' },
+      ],
+      todayStr: (_nowMs) => '2026-07-01',
+    }
+
+    const injector = createInject(fakeCtx, fakeConfig, fakeDeps)
+    injector.register()
+
+    // Check all 4 providers registered
+    assert.ok(typeof registrations['recent_life'] === 'function', 'recent_life registered')
+    assert.ok(typeof registrations['life_state'] === 'function', 'life_state registered')
+    assert.ok(typeof registrations['today_plan'] === 'function', 'today_plan registered')
+    assert.ok(typeof registrations['pending_thoughts'] === 'function', 'pending_thoughts registered')
+
+    // Test recent_life renders correctly
+    const session = null  // P1 fallback to config.presets[0]
+    const recentText = await registrations['recent_life']([], {}, { session })
+    assert.ok(recentText.includes('早锻刀'), 'recent_life includes event title')
+    assert.ok(recentText.includes('专注'), 'recent_life includes mood')
+
+    // Test life_state renders correctly
+    const stateText = await registrations['life_state']([], {}, { session })
+    assert.ok(stateText.includes('刀部屋'), 'life_state includes location')
+    assert.ok(stateText.includes('擦刀'), 'life_state includes activity')
+
+    // Test today_plan renders correctly
+    const planText = await registrations['today_plan']([], {}, { session })
+    assert.ok(planText.includes('上午'), 'today_plan includes block label')
+    assert.ok(planText.includes('读书'), 'today_plan includes activity')
+
+    // Test pending_thoughts renders correctly
+    const thoughtsText = await registrations['pending_thoughts']([], {}, { session })
+    assert.ok(thoughtsText.includes('今天天气很好'), 'pending_thoughts includes content')
+    assert.ok(thoughtsText.includes('[low]'), 'pending_thoughts includes urgency')
+  })
+
+  await runAsync('createInject: register() skips when no promptRenderer', async () => {
+    const warns = []
+    const fakeCtx = {
+      chatluna: {},  // no promptRenderer
+      effect: (fn) => fn(),
+      logger: () => ({ warn: (msg) => warns.push(msg), info: () => {} }),
+    }
+    const fakeConfig = { presets: ['higekiri'] }
+    const fakeDeps = {
+      recent: async () => [],
+      getState: async () => ({}),
+      getPlan: async () => null,
+      recallThoughts: async () => [],
+    }
+    const injector = createInject(fakeCtx, fakeConfig, fakeDeps)
+    // Should not throw
+    injector.register()
+    assert.ok(warns.some((w) => w.includes('promptRenderer')), 'should warn about missing promptRenderer')
+  })
+
+  await runAsync('createInject: custom varNames used for registration', async () => {
+    const registered = []
+    const fakeRenderer = {
+      registerFunctionProvider: (name, _fn) => {
+        registered.push(name)
+        return () => {}
+      },
+    }
+    const fakeCtx = {
+      chatluna: { promptRenderer: fakeRenderer },
+      effect: (fn) => fn(),
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    }
+    const fakeConfig = {
+      presets: ['higekiri'],
+      varNames: {
+        recentLife: 'my_recent',
+        lifeState: 'my_state',
+        todayPlan: 'my_plan',
+        pendingThoughts: 'my_thoughts',
+      },
+    }
+    const fakeDeps = {
+      recent: async () => [],
+      getState: async () => ({}),
+      getPlan: async () => null,
+      recallThoughts: async () => [],
+    }
+    const injector = createInject(fakeCtx, fakeConfig, fakeDeps)
+    injector.register()
+    assert.ok(registered.includes('my_recent'), 'custom recent_life varName used')
+    assert.ok(registered.includes('my_state'), 'custom life_state varName used')
+    assert.ok(registered.includes('my_plan'), 'custom today_plan varName used')
+    assert.ok(registered.includes('my_thoughts'), 'custom pending_thoughts varName used')
+  })
+
+  await runAsync('createInject: dep error returns empty string gracefully', async () => {
+    const registrations = {}
+    const fakeRenderer = {
+      registerFunctionProvider: (name, fn) => {
+        registrations[name] = fn
+        return () => {}
+      },
+    }
+    const fakeCtx = {
+      chatluna: { promptRenderer: fakeRenderer },
+      effect: (fn) => fn(),
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    }
+    const fakeConfig = { presets: ['higekiri'] }
+    const fakeDeps = {
+      recent: async () => { throw new Error('DB failure') },
+      getState: async () => { throw new Error('DB failure') },
+      getPlan: async () => { throw new Error('DB failure') },
+      recallThoughts: async () => { throw new Error('DB failure') },
+      todayStr: () => '2026-07-01',
+    }
+    const injector = createInject(fakeCtx, fakeConfig, fakeDeps)
+    injector.register()
+
+    const session = null
+    const recentText = await registrations['recent_life']([], {}, { session })
+    assert.strictEqual(recentText, '', 'dep error → empty string for recent_life')
+    const stateText = await registrations['life_state']([], {}, { session })
+    assert.strictEqual(stateText, '', 'dep error → empty string for life_state')
+    const planText = await registrations['today_plan']([], {}, { session })
+    assert.strictEqual(planText, '', 'dep error → empty string for today_plan')
+    const thoughtsText = await registrations['pending_thoughts']([], {}, { session })
+    assert.strictEqual(thoughtsText, '', 'dep error → empty string for pending_thoughts')
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }
