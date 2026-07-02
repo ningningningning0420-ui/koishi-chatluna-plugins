@@ -389,7 +389,7 @@ async function gatherPersona(presetId, ctx, config) {
  *     silenceState(presetId)         → object                ({unansweredCount, lastMessageAgoMin, ...})
  *   }
  *
- * @returns {{ roll(presetId, nowMs): Promise<void>, registerHandlers(): void }}
+ * @returns {{ roll(presetId, nowMs): Promise<object|undefined>, registerHandlers(): void }}
  */
 function createRoller(ctx, config, deps) {
   const logger = ctx && ctx.logger
@@ -413,9 +413,14 @@ function createRoller(ctx, config, deps) {
   /**
    * Execute one roll cycle for a preset.
    *
+   * Returns a result summary on completion (same shape for dryRun and normal
+   * path, §6.3): { event, next_delay_minutes, wake_ms, used_fallback, dry_run,
+   * clamped }. Returns undefined when the roll was skipped (not LIVING, guard
+   * busy, or model unavailable with fallbackToTemplate=false).
+   *
    * @param {string} presetId
    * @param {number} nowMs    Current unix-ms (caller supplies; no internal Date.now() for logic)
-   * @returns {Promise<void>}
+   * @returns {Promise<object|undefined>}
    */
   async function roll(presetId, nowMs) {
     const now = nowMs != null ? nowMs : Date.now()
@@ -433,7 +438,7 @@ function createRoller(ctx, config, deps) {
     }
 
     try {
-      await _doRoll(presetId, now)
+      return await _doRoll(presetId, now)
     } finally {
       if (d.guard) d.guard.release(presetId)
     }
@@ -453,13 +458,12 @@ function createRoller(ctx, config, deps) {
     const recentEvents = await _safeCall(() => d.recent(presetId, cfg.stmMax || 8), [])
     const silence = (d.silenceState ? d.silenceState(presetId) : {})
 
-    // ── Step 3: dryRun — log and return ───────────────────────────────────
-    if (cfg.dryRun) {
-      const msgs = buildRollPrompt({ persona, lifeState: state, world, block, availableTypes: types, recentEvents, silenceState: silence })
-      logger.info('[roller:dryRun] %s | would-be prompt (system len=%d, user len=%d)',
-        presetId, msgs[0].content.length, msgs[1].content.length)
-      return
-    }
+    // ── Step 3: dryRun flag — §6.3 (review 修正) ──────────────────────────
+    // dry-run = 照常调模型 + 解析 + 连续性 clamp，只 log 解析结果摘要，
+    // 跳过一切 sim 数据写入（event/state/thought）与外发（onShare 路由）；
+    // 自循环照常续排（调度任务表属运维数据）。只有真调模型、连滚多轮，
+    // 才看得出 roll 质量/节奏/漂移——这才配得上"调参"用途。
+    const isDryRun = !!cfg.dryRun
 
     // ── Step 4: Model call or fallback ─────────────────────────────────────
     let parsed = null
@@ -540,26 +544,37 @@ function createRoller(ctx, config, deps) {
     })
 
     let clampedState = nextStatePatch
+    let clampApplied = false
     if (d.continuityClamp) {
       const { ok, clamped, reason } = d.continuityClamp(clampInput, world)
       clampedState = clamped
       if (!ok) {
+        clampApplied = true
         logger.warn('[roller] %s: continuity clamp applied — %s', presetId, reason)
       }
     }
 
-    // ── Step 7: Persist event + state ─────────────────────────────────────
+    // ── Step 7: Persist event + state（dryRun 只 log 解析摘要，不写库）─────
     const eventRow = Object.assign({}, event, {
       plan_adherence: (parsed && parsed.plan_adherence) || 'free',
       importance: event.importance || 0.2,
       consolidated: false,
     })
 
-    await _safeCall(() => d.appendEvent(presetId, eventRow), null)
-    await _safeCall(() => d.setState(presetId, clampedState), null)
+    if (isDryRun) {
+      logger.info(
+        '[roller:dryRun] %s | event="%s" type=%s adherence=%s share=%s next_delay=%dmin clamped=%s fallback=%s',
+        presetId, event.title, event.event_type, eventRow.plan_adherence,
+        wantToShare.decision, nextDelayMinutes, clampApplied, usedFallback
+      )
+    } else {
+      await _safeCall(() => d.appendEvent(presetId, eventRow), null)
+      await _safeCall(() => d.setState(presetId, clampedState), null)
+    }
 
     // ── Step 8: onShare hook (Task 11, default no-op) ─────────────────────
-    if (d.onShare) {
+    // dryRun 跳过：不进 ProactiveBridge / 心事簿（ThoughtBuffer 写入挂在这条路由后面）。
+    if (d.onShare && !isDryRun) {
       try {
         await d.onShare(presetId, wantToShare)
       } catch (e) {
@@ -612,6 +627,16 @@ function createRoller(ctx, config, deps) {
     if (cfg.debug) {
       logger.info('[roller] %s: roll done — event="%s" type=%s nextWake=%s',
         presetId, event.title, event.event_type, new Date(wakeMs).toISOString())
+    }
+
+    // ── Result summary — dryRun 与正常路径结构一致（§6.3）─────────────────
+    return {
+      event: eventRow,
+      next_delay_minutes: nextDelayMinutes,
+      wake_ms: wakeMs,
+      used_fallback: usedFallback,
+      dry_run: isDryRun,
+      clamped: clampApplied,
     }
   }
 

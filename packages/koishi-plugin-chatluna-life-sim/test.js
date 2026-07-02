@@ -3487,11 +3487,14 @@ async function main() {
     assert.strictEqual(appendCalled, false, 'appendEvent not called when guard busy')
   })
 
-  await runAsync('createRoller: dryRun skips appendEvent and setState', async () => {
+  // §6.3 dry-run 新语义（review 修正）：照常走 roll（此处模型不可用 → fallback 模板），
+  // 只跳过 sim 数据写入；自循环照常续排（否则 dry-run 一次循环就死）。
+  await runAsync('createRoller: dryRun (fallback path) skips writes but still schedules next wake', async () => {
     const { createRoller } = require('./roll-roller')
 
     let appendCalled = false
     let setCalled = false
+    let scheduledWake = null
 
     const deps = {
       presence: { isLiving: () => true },
@@ -3502,10 +3505,13 @@ async function main() {
       setState: async () => { setCalled = true },
       recent: async () => [],
       appendEvent: async () => { appendCalled = true },
-      getModel: async () => null,
+      getModel: async () => null,  // model unavailable → fallback template
       invoke: async () => null,
       continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
-      scheduler: { scheduleTask: async () => 1, registerHandler: () => {} },
+      scheduler: {
+        scheduleTask: async (pid, fireAt, type) => { scheduledWake = { pid, fireAt, type }; return 1 },
+        registerHandler: () => {},
+      },
       silenceState: () => ({}),
       gatherPersona: async () => 'persona',
       planner: null,
@@ -3516,12 +3522,16 @@ async function main() {
       logger: () => ({ info: () => {}, warn: () => {} }),
       database: { remove: async () => {} },
     }
-    const config = { dryRun: true, fallbackToTemplate: false, defaultNextDelayMin: 60 }
+    const config = { dryRun: true, fallbackToTemplate: true, defaultNextDelayMin: 60 }
     const roller = createRoller(ctx, config, deps)
 
-    await roller.roll('test-preset', Date.now())
+    const result = await roller.roll('test-preset', Date.now())
     assert.strictEqual(appendCalled, false, 'appendEvent not called in dryRun')
     assert.strictEqual(setCalled, false, 'setState not called in dryRun')
+    assert.ok(scheduledWake !== null, 'next wake still scheduled in dryRun (自循环不死)')
+    assert.strictEqual(scheduledWake.type, 'roll', 'next wake is roll type')
+    assert.ok(result && typeof result.next_delay_minutes === 'number', 'result carries next_delay_minutes')
+    assert.strictEqual(result.dry_run, true, 'result flags dry_run')
   })
 
   await runAsync('createRoller: fallback used when model unavailable', async () => {
@@ -3641,7 +3651,7 @@ async function main() {
     }
     const roller = createRoller(ctx, config, deps)
 
-    await roller.roll('higekiri', Date.now())
+    const result = await roller.roll('higekiri', Date.now())
 
     assert.ok(appendedEvent !== null, 'appendEvent was called')
     assert.strictEqual(appendedEvent.title, '午后发呆', 'event title correct')
@@ -3651,6 +3661,10 @@ async function main() {
     assert.strictEqual(scheduledWake.type, 'roll', 'next wake is roll type')
     assert.ok(onShareArgs !== null, 'onShare was called')
     assert.strictEqual(onShareArgs.share.decision, 'no', 'want_to_share.decision=no passed to onShare')
+    // 返回值结构与 dry-run 路径一致（§6.3）
+    assert.ok(result, 'roll returns a result object')
+    assert.strictEqual(result.next_delay_minutes, 50, 'result carries parsed next_delay_minutes')
+    assert.strictEqual(result.dry_run, false, 'result flags dry_run=false on normal path')
   })
 
   await runAsync('createRoller: continuity clamp violation is logged (still proceeds)', async () => {
@@ -3767,6 +3781,98 @@ async function main() {
     assert.ok('block' in registeredHandlers, 'block handler registered')
     assert.strictEqual(typeof registeredHandlers.roll, 'function', 'roll handler is function')
     assert.strictEqual(typeof registeredHandlers.block, 'function', 'block handler is function')
+  })
+
+  // §6.3 dry-run 可调参（review 修正）：dry-run 照常调模型 + 解析 + clamp，
+  // 跳过一切 sim 数据写入（appendEvent/setState）与外发（onShare → ProactiveBridge/
+  // ThoughtBuffer 均挂在 onShare 之后，跳过 onShare 即全部跳过），
+  // 但返回值带 next_delay 且照常续排下一次 wake（调度任务表属运维数据）。
+  await runAsync('createRoller: dryRun 调模型 — 零写入零外发, 返回 next_delay, 模型恰好调一次', async () => {
+    const { createRoller } = require('./roll-roller')
+
+    const fakeModelResponse = JSON.stringify({
+      candidates: ['擦刀', '午睡'],
+      chosen_index: 0,
+      event: {
+        title: '午后擦刀',
+        narrative: '取出打刀细细擦拭，刀身映着日光。',
+        event_type: '练习',
+        location: '本丸·主屋',
+        participants: [],
+        mood: '专注',
+        duration_minutes: 30,
+        importance: 0.2,
+        threads_touched: [],
+        type: 'context',
+      },
+      plan_adherence: 'followed',
+      replan_hint: '',
+      want_to_share: { decision: 'later', target: '审神者', reason: '想给主看看刀光', draft: '', thought: '刀光真好看' },
+      next_state: { location: '本丸·主屋', current_activity: '擦刀', mood: '专注', open_threads: [] },
+      next_delay_minutes: 45,
+    })
+
+    let appendCalls = 0
+    let setStateCalls = 0
+    let onShareCalls = 0
+    let invokeCalls = 0
+    let scheduledWake = null
+
+    const fakeModel = { invoke: async () => ({ content: fakeModelResponse }) }
+
+    const deps = {
+      presence: { isLiving: () => true },
+      guard: { acquire: () => true, release: () => {}, current: () => null },
+      getWorld: async () => ({
+        clock: Date.now() - 60000,
+        timeOfDay: '午后', season: '春', weather: '晴',
+        locations: ['本丸·主屋', '庭院'],
+        externalLocations: [],
+      }),
+      available: () => [{ type: '练习', weight: 1 }],
+      getState: async () => ({ location: '本丸·主屋', mood: 'neutral', open_threads: [] }),
+      setState: async () => { setStateCalls++ },
+      recent: async () => [],
+      appendEvent: async () => { appendCalls++ },
+      getModel: async () => fakeModel,
+      invoke: async (model, msgs, opts) => {
+        invokeCalls++
+        const res = await model.invoke(msgs, opts)
+        const { extractText } = require('./model')
+        return extractText(res && res.content)
+      },
+      continuityClamp: (ns, w) => ({ ok: true, clamped: ns, reason: '' }),
+      scheduler: {
+        scheduleTask: async (pid, fireAt, type) => { scheduledWake = { pid, fireAt, type }; return 7 },
+        registerHandler: () => {},
+      },
+      silenceState: () => ({}),
+      gatherPersona: async () => 'persona',
+      planner: null,
+      onShare: async () => { onShareCalls++ },
+    }
+
+    const ctx = {
+      logger: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
+      database: { remove: async () => {} },
+    }
+    const config = { dryRun: true, fallbackToTemplate: true, defaultNextDelayMin: 60, stmMax: 8 }
+    const roller = createRoller(ctx, config, deps)
+
+    const result = await roller.roll('higekiri', Date.now())
+
+    // 模型照常调（这才配得上"调参"用途）
+    assert.strictEqual(invokeCalls, 1, 'model invoked exactly once')
+    // 零写入零外发
+    assert.strictEqual(appendCalls, 0, 'appendEvent zero calls in dryRun')
+    assert.strictEqual(setStateCalls, 0, 'setState zero calls in dryRun')
+    assert.strictEqual(onShareCalls, 0, 'onShare zero calls in dryRun (不进 ProactiveBridge/心事簿)')
+    // 返回值带 next_delay，自循环照常续排
+    assert.ok(result, 'roll returns a result object in dryRun')
+    assert.strictEqual(result.next_delay_minutes, 45, 'result carries parsed next_delay_minutes')
+    assert.strictEqual(result.dry_run, true, 'result flags dry_run')
+    assert.ok(scheduledWake !== null, 'next wake still scheduled in dryRun')
+    assert.strictEqual(scheduledWake.type, 'roll', 'next wake is roll type')
   })
 
   // ---------------------------------------------------------------------------
