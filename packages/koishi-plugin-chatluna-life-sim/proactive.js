@@ -8,6 +8,7 @@
 //   withinMinInterval(lastSentMs, nowMs, minH)       → boolean (true = too soon / blocked)
 //   hasForbiddenPhrase(text, patterns)               → boolean
 //   decideOutreach(share, gates)                     → verdict string
+//   buildRewritePrompt(persona, draft, contextBits)  → messages array (§5.8 成稿改写)
 //
 // Glue (needs ctx + injected deps):
 //   createProactiveBridge(ctx, config, deps) →
@@ -210,6 +211,41 @@ function decideOutreach(share, gates) {
 }
 
 // ---------------------------------------------------------------------------
+// Pure function: buildRewritePrompt (§5.8 成稿改写)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the messages for the final-draft rewrite call: the proactiveModel
+ * rewrites the cheap rollModel's draft in the persona's own voice before send.
+ *
+ * @param {string}   persona      – persona canon text (from gatherPersona)
+ * @param {string}   draft        – the cheap-model draft to rewrite
+ * @param {string[]} [contextBits] – optional short context lines
+ *                                  (e.g. event title, silence state)
+ * @returns {Array<{role:string, content:string}>}  [system, user] messages
+ */
+function buildRewritePrompt(persona, draft, contextBits) {
+  const systemParts = []
+  if (persona) systemParts.push(String(persona))
+  systemParts.push([
+    '用你自己的口吻重写这条你想主动发给对方的消息草稿。',
+    '要求：',
+    '- 保留原意与事实，不添加任何新事件，长度相近。',
+    '- 禁止挽留、内疚、情感操控话术。',
+    '- 只输出重写后的消息文本，不要任何解释。',
+  ].join('\n'))
+
+  const userParts = ['草稿：' + (draft || '')]
+  const bits = Array.isArray(contextBits) ? contextBits.filter(Boolean) : []
+  if (bits.length > 0) userParts.push('情境：' + bits.join('；'))
+
+  return [
+    { role: 'system', content: systemParts.join('\n\n') },
+    { role: 'user',   content: userParts.join('\n') },
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // Helper: derive day key from nowMs + timezone (YYYY-MM-DD in local time)
 // ---------------------------------------------------------------------------
 
@@ -251,6 +287,8 @@ function _dayKey(nowMs, timezone) {
  *   invoke:         (model: object, messages: Array) => Promise<string>,
  *   silenceState:   (presetId: string) => { silenceMinutes: number, followUpCount: number },
  *   presence:       { goLive(presetId: string): void },
+ *   rewriteModel?:  string,                                  // §5.8 成稿改写 model name (platform/model)
+ *   getPersona?:    (presetId: string) => Promise<string>,   // §5.8 persona canon source
  *   logger?:        object,
  * }} deps
  *
@@ -320,6 +358,62 @@ function createProactiveBridge(ctx, config, deps) {
     return async (presetId, text) => {
       logger.info('[proactive] (no transport) would send to %s: %s', presetId, (text || '').slice(0, 80))
     }
+  }
+
+  /**
+   * §5.8 成稿改写: rewrite the cheap-model draft in the persona's voice via
+   * the rewrite model (deps.rewriteModel || cfg.proactiveModel || cfg.consolidateModel).
+   * Degrades to the raw draft (with one warn) when the rewrite is unavailable,
+   * fails, or returns empty. Rewrite off (proactiveRewrite=false) → raw draft,
+   * no model call (向后兼容).
+   *
+   * @param {string}   presetId
+   * @param {string}   draft
+   * @param {string[]} [contextBits]
+   * @returns {Promise<string>}  final candidate text (guard NOT applied here)
+   */
+  async function _rewriteDraft(presetId, draft, contextBits) {
+    if (cfg.proactiveRewrite === false) return draft
+
+    const modelName = d.rewriteModel || cfg.proactiveModel || cfg.consolidateModel || ''
+    if (!modelName || typeof d.getModel !== 'function' || typeof d.invoke !== 'function') {
+      logger.warn('[proactive] %s: rewrite enabled but no usable rewrite model; sending raw draft', presetId)
+      return draft
+    }
+
+    try {
+      const persona = typeof d.getPersona === 'function' ? await d.getPersona(presetId) : ''
+      const messages = buildRewritePrompt(persona, draft, contextBits)
+      const model = await d.getModel(ctx, modelName)
+      const out = await d.invoke(model, messages)
+      const text = String(out == null ? '' : out).trim()
+      if (!text) {
+        logger.warn('[proactive] %s: rewrite returned empty; sending raw draft', presetId)
+        return draft
+      }
+      return text
+    } catch (e) {
+      logger.warn('[proactive] %s: rewrite failed (%s); sending raw draft', presetId, e && e.message)
+      return draft
+    }
+  }
+
+  /**
+   * Produce the FINAL outbound text for a cleared 'send' verdict:
+   * rewrite (or pass through) + re-run the forbidden-phrase guard on the
+   * result — the guard must judge what actually goes out, not the draft (§5.8).
+   *
+   * @returns {Promise<string|null>}  final text, or null when guard-blocked
+   */
+  async function _finalizeOutboundText(presetId, draft, contextBits) {
+    const text = await _rewriteDraft(presetId, draft, contextBits)
+    // Same guard condition as _computeGates: only when forbiddenPhraseGuard is on.
+    // With rewrite off, text === draft and the gate already passed → no behavior change.
+    if (cfg.forbiddenPhraseGuard && hasForbiddenPhrase(text, FORBIDDEN_PATTERNS)) {
+      logger.warn('[proactive] %s: final text blocked by forbidden phrase guard; suppressed', presetId)
+      return null
+    }
+    return text
   }
 
   // --------------------------------------------------------------------------
@@ -401,11 +495,17 @@ function createProactiveBridge(ctx, config, deps) {
         return
 
       case 'send': {
-        const text = share.draft || share.thought || ''
-        if (!text) {
+        const draft = share.draft || share.thought || ''
+        if (!draft) {
           logger.warn('[proactive] %s: verdict=send but draft is empty; skip', presetId)
           return
         }
+        // §5.8 成稿改写 + guard on the FINAL outbound text
+        const contextBits = []
+        if (share.reason) contextBits.push('缘由：' + share.reason)
+        if (share.thought && share.thought !== draft) contextBits.push('想法：' + share.thought)
+        const text = await _finalizeOutboundText(presetId, draft, contextBits)
+        if (text == null) return  // guard-blocked after rewrite
         const transport = _sendTransport()
         try {
           await transport(presetId, text)
@@ -546,9 +646,23 @@ function createProactiveBridge(ctx, config, deps) {
     logger.debug('[proactive] %s: followUp verdict=%s', presetId, verdict)
 
     if (verdict === 'send') {
+      // §5.8 成稿改写 — follow-up text takes the same rewrite + final-guard path
+      const contextBits = [
+        '主人已静默 ' + silenceMinutes + ' 分钟',
+        '已追问 ' + followUpCount + ' 次',
+      ]
+      const finalText = await _finalizeOutboundText(presetId, draft, contextBits)
+      if (finalText == null) {
+        // guard-blocked after rewrite → treat like any other block: go live
+        logger.info('[proactive] %s: follow-up final text blocked; going live', presetId)
+        if (d.presence && typeof d.presence.goLive === 'function') {
+          d.presence.goLive(presetId)
+        }
+        return
+      }
       const transport = _sendTransport()
       try {
-        await transport(presetId, draft)
+        await transport(presetId, finalText)
         _bumpStats(presetId, dayKey, ts)
         logger.info('[proactive] %s: follow-up sent (followUpCount was %d)', presetId, followUpCount)
       } catch (e) {
@@ -577,6 +691,7 @@ module.exports = {
   withinMinInterval,
   hasForbiddenPhrase,
   decideOutreach,
+  buildRewritePrompt,
   FORBIDDEN_PATTERNS,
   // Glue factory
   createProactiveBridge,

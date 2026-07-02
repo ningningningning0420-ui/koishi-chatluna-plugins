@@ -189,6 +189,10 @@ exports.apply = (ctx, config) => {
     invoke,
     silenceState,
     presence: { goLive: (presetId) => presence.goLive(presetId) },
+    // §5.8 成稿改写: proactiveModel (空=复用 consolidateModel) rewrites the cheap
+    // draft in the persona's voice before send; persona 与 roller 共用同一闭包.
+    rewriteModel: config.proactiveModel || config.consolidateModel,
+    getPersona: _gatherPersona,
     logger,
   })
 

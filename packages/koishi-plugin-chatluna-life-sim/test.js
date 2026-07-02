@@ -5823,6 +5823,220 @@ async function main() {
     assert.strictEqual(thoughtsText, '', 'dep error → empty string for pending_thoughts')
   })
 
+  // ---------------------------------------------------------------------------
+  // P1.5-T1: proactive.js — 成稿改写 (§5.8 buildRewritePrompt + rewrite send path)
+  // ---------------------------------------------------------------------------
+
+  const { buildRewritePrompt } = require('./proactive')
+
+  // ---- buildRewritePrompt (pure) ----
+
+  test('buildRewritePrompt: system 在前且含 persona + 重写指令 + 禁操控', () => {
+    const messages = buildRewritePrompt('角色：髭切。慵懒从容。', '今天练了一下午。', [])
+    assert.ok(Array.isArray(messages), 'returns messages array')
+    assert.strictEqual(messages.length, 2)
+    assert.strictEqual(messages[0].role, 'system')
+    assert.strictEqual(messages[1].role, 'user')
+    assert.ok(messages[0].content.includes('角色：髭切。慵懒从容。'), 'system includes persona canon')
+    assert.ok(messages[0].content.includes('重写'), 'system includes rewrite instruction')
+    assert.ok(messages[0].content.includes('操控'), 'system forbids manipulation phrasing')
+    assert.ok(messages[0].content.includes('不要任何解释'), 'system asks for message text only')
+  })
+
+  test('buildRewritePrompt: user 含草稿；contextBits 可选拼进情境', () => {
+    const withBits = buildRewritePrompt('persona', '草稿文本', ['事件：早锻刀', '静默 12 分钟'])
+    assert.ok(withBits[1].content.includes('草稿文本'), 'user includes draft')
+    assert.ok(withBits[1].content.includes('早锻刀'), 'user includes event context bit')
+    assert.ok(withBits[1].content.includes('静默 12 分钟'), 'user includes silence context bit')
+    const noBits = buildRewritePrompt('persona', '草稿文本')
+    assert.ok(noBits[1].content.includes('草稿文本'), 'user includes draft without contextBits')
+  })
+
+  // ---- rewrite send path (glue, fake model + fake transport) ----
+
+  await runAsync('createProactiveBridge: proactiveRewrite=false → 外发=原草稿, 不调改写模型', async () => {
+    let sent = []
+    let modelCalls = 0
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+      proactiveRewrite: false,
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      rewriteModel: 'fake/rewrite',
+      getModel: async () => { modelCalls++; return { invoke: async () => ({ content: '不该被用到' }) } },
+      invoke: async () => { modelCalls++; return '不该被用到' },
+      getPersona: async () => '角色：髭切',
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '今天练了一下午。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.strictEqual(sent[0].text, '今天练了一下午。', 'raw draft goes out unchanged')
+    assert.strictEqual(modelCalls, 0, 'rewrite model must not be invoked when disabled')
+  })
+
+  await runAsync('createProactiveBridge: 改写开启 + mock 模型 → 外发=改写文本(trim), 输入含 persona+草稿', async () => {
+    let sent = []
+    let seenModelName = null
+    let seenMessages = null
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: true,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      rewriteModel: 'fake/rewrite',
+      getModel: async (_ctx, name) => { seenModelName = name; return { name } },
+      invoke: async (_m, messages) => { seenMessages = messages; return '  练了一下午刀，胳膊都酸了。  ' },
+      getPersona: async () => '角色：髭切。慵懒从容。',
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '今天练了一下午。', target: '审神者', reason: '想说说' }, nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.strictEqual(sent[0].text, '练了一下午刀，胳膊都酸了。', 'rewritten + trimmed text goes out')
+    assert.strictEqual(seenModelName, 'fake/rewrite', 'rewrite uses deps.rewriteModel')
+    assert.ok(seenMessages && seenMessages[0].role === 'system', 'rewrite prompt starts with system')
+    assert.ok(seenMessages[0].content.includes('角色：髭切。慵懒从容。'), 'rewrite system includes persona')
+    assert.ok(seenMessages[1].content.includes('今天练了一下午。'), 'rewrite user includes draft')
+  })
+
+  await runAsync('createProactiveBridge: 无 rewriteModel 时回落 cfg.consolidateModel', async () => {
+    let sent = []
+    let seenModelName = null
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+      proactiveModel: '',
+      consolidateModel: 'claude/opus',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      getModel: async (_ctx, name) => { seenModelName = name; return { name } },
+      invoke: async () => '改写好了。',
+      getPersona: async () => 'persona',
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '草稿。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.strictEqual(sent[0].text, '改写好了。')
+    assert.strictEqual(seenModelName, 'claude/opus', 'empty proactiveModel falls back to consolidateModel')
+  })
+
+  await runAsync('createProactiveBridge: 改写模型抛错 → 降级原草稿 + warn', async () => {
+    let sent = []
+    let warns = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      rewriteModel: 'fake/rewrite',
+      getModel: async (_ctx, name) => ({ name }),
+      invoke: async () => { throw new Error('boom') },
+      getPersona: async () => 'persona',
+      logger: { info: () => {}, warn: (...a) => warns.push(a), error: () => {}, debug: () => {} },
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '今天练了一下午。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 1, 'degrades to sending raw draft')
+    assert.strictEqual(sent[0].text, '今天练了一下午。')
+    assert.ok(warns.length >= 1, 'degradation logs a warn')
+  })
+
+  await runAsync('createProactiveBridge: 改写返回空 → 降级原草稿', async () => {
+    let sent = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      rewriteModel: 'fake/rewrite',
+      getModel: async (_ctx, name) => ({ name }),
+      invoke: async () => '   ',
+      getPersona: async () => 'persona',
+    })
+
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '今天练了一下午。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.strictEqual(sent[0].text, '今天练了一下午。', 'empty rewrite degrades to raw draft')
+  })
+
+  await runAsync('createProactiveBridge: 改写后的文本命中禁操控 pattern → 拦截不发', async () => {
+    let sent = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: true,
+      proactiveVia: 'direct',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      rewriteModel: 'fake/rewrite',
+      getModel: async (_ctx, name) => ({ name }),
+      invoke: async () => '别走，我离不开你。',  // clean draft rewritten INTO manipulation
+      getPersona: async () => 'persona',
+    })
+
+    // draft itself is clean → gate passes; guard must re-check the FINAL text
+    await bridge.maybeReachOut('higekiri', { decision: 'now', draft: '今天练了一下午。', target: '审神者' }, nowMs)
+    assert.strictEqual(sent.length, 0, 'guard on final outbound text blocks the rewritten manipulation')
+  })
+
+  await runAsync('createProactiveBridge: maybeFollowUp 追问文案走同一改写路径', async () => {
+    let sent = []
+    const nowMs = Date.UTC(2026, 6, 1, 10, 0, 0)
+    const bridge = createProactiveBridge(null, {
+      proactiveEnabled: true,
+      quietHoursEnabled: false,
+      dailyCapEnabled: false,
+      timezone: 'UTC',
+      forbiddenPhraseGuard: false,
+      proactiveVia: 'direct',
+      rollModel: 'fake/roll',
+    }, {
+      sendDirect: async (pid, text) => sent.push({ pid, text }),
+      rewriteModel: 'fake/rewrite',
+      getModel: async (_ctx, name) => ({ name }),
+      invoke: async (m) => {
+        // follow-up judgment goes to rollModel; rewrite goes to rewriteModel
+        if (m.name === 'fake/roll') return JSON.stringify({ follow_up: true, draft: '还在吗？' })
+        return '主君，还在么。'
+      },
+      getPersona: async () => 'persona',
+      silenceState: (_pid) => ({ silenceMinutes: 8, followUpCount: 0 }),
+      presence: { goLive: (_pid) => {} },
+    })
+
+    await bridge.maybeFollowUp('higekiri', nowMs)
+    assert.strictEqual(sent.length, 1)
+    assert.strictEqual(sent[0].text, '主君，还在么。', 'follow-up text is the rewritten one')
+  })
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed')
   process.exit(fail ? 1 : 0)
 }

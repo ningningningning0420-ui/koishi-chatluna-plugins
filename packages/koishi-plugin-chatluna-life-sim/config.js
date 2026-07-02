@@ -160,6 +160,12 @@ const Config = Schema.object({
   forbiddenPhraseGuard: Schema.boolean()
     .default(true)
     .description('是否启用禁用操控话术检测（防情感勒索/粘人话术）。'),
+  proactiveRewrite: Schema.boolean()
+    .default(true)
+    .description('成稿改写（§5.8）：主动消息/追问发送前，用 proactiveModel 以人设重写便宜模型草稿；关 = 草稿直发（向后兼容）。'),
+  proactiveModel: Schema.string()
+    .default('')
+    .description('成稿改写用模型（platform/model）；留空 = 复用 consolidateModel。'),
 
   // ---- 协作层 / 多 agent（P3）----
   sharedStorePath: Schema.string()
