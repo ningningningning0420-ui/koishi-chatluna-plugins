@@ -1,0 +1,66 @@
+{
+  "name": "koishi-plugin-chatluna-photo",
+  "version": "0.1.0",
+  "description": "Let a ChatLuna character bot take and send photos (NovelAI image gen) on its own decision, via a [[photo:...]] reply-marker it writes in its own output — with a scene-planner LLM pass, a local self-curated album (recall/reroll/delete), and an optional always-on camera mode.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "妖祀",
+  "homepage": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/tree/main/packages/koishi-plugin-chatluna-photo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ningningningning0420-ui/koishi-chatluna-plugins.git",
+    "directory": "packages/koishi-plugin-chatluna-photo"
+  },
+  "bugs": {
+    "url": "https://github.com/ningningningning0420-ui/koishi-chatluna-plugins/issues"
+  },
+  "files": [
+    "index.js",
+    "photo-tag.js",
+    "guards.js",
+    "nai-client.js",
+    "assemble.js",
+    "scene-planner.js",
+    "model.js",
+    "album.js",
+    "album-pick.js",
+    "defaults.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "koishi",
+    "plugin",
+    "chatluna",
+    "chatluna-character",
+    "novelai",
+    "image-generation",
+    "selfie",
+    "chatbot"
+  ],
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "peerDependencies": {
+    "koishi": "^4.17.0",
+    "koishi-plugin-chatluna": "*",
+    "@langchain/core": "*"
+  },
+  "koishi": {
+    "description": {
+      "zh": "让 ChatLuna 角色 bot 自主决定「拍张照片发出去」：模型在自己输出（含 <think>）里写 [[photo:意图]] 标记，插件带外读取→scene-planner 独立 LLM 调用扩写成 danbooru 富提示词→NovelAI 生图→发到当前会话。不走原生工具调用（不打断角色解析）。附带：本地相册（默认全存、按角色心意清理、[[photo:描述|recall]] 跨会话召回）、回复照片重roll/删除、[[camera:on/off]] 摄像模式（开着每条回复自动配 POV 自拍，计入限流额度）。⚠ 需要给 koishi-plugin-chatluna-character 打一个小补丁暴露 chatluna_character/raw-response 事件（见 README），npm i 后补丁会被冲掉需重打。",
+      "en": "Lets a ChatLuna character bot decide on its own to take & send a photo: the model writes a [[photo:intent]] marker in its own output (incl. <think>); the plugin reads it out-of-band, expands it into a rich danbooru prompt via a separate scene-planner LLM call, generates with NovelAI and sends it. No native tool call (never breaks the character parse). Includes a local self-curated album (keep-all, in-character pruning, cross-chat recall), reply-to-photo reroll/delete, and a [[camera:on/off]] auto-selfie mode (rate-limited). ⚠ Requires a small patch on koishi-plugin-chatluna-character exposing the chatluna_character/raw-response event (see README); re-apply after every npm install."
+    },
+    "service": {
+      "required": [
+        "chatluna"
+      ],
+      "optional": [
+        "chatluna_character"
+      ],
+      "implements": [
+        "photo"
+      ]
+    }
+  }
+}
