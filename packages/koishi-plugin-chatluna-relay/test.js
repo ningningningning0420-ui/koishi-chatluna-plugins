@@ -229,6 +229,16 @@ test('relay-tag: 别名缺失忽略', () => {
   const { relays } = rt.parseRelayTags('[[relay:|没人]]')
   assert.strictEqual(relays.length, 0)
 })
+test('relay-tag: |again 重发确认旗标（几分钟内连发同一人需显式确认）', () => {
+  const { relays } = rt.parseRelayTags('[[relay:芙蕾|再说一次|again]]')
+  assert.strictEqual(relays[0].again, true)
+  assert.strictEqual(relays[0].text, '再说一次')
+  const { relays: r2 } = rt.parseRelayTags('[[relay:芙蕾|图=那张|nsfw|再发]]')
+  assert.strictEqual(r2[0].again, true)
+  assert.deepStrictEqual(r2[0].photo, { desc: '那张', nsfw: true })
+  const { relays: r3 } = rt.parseRelayTags('[[relay:芙蕾|嗨]]')
+  assert.strictEqual(r3[0].again, false)
+})
 test('relay-tag: cleanedText 剥掉标记', () => {
   const { cleanedText } = rt.parseRelayTags('哈 [[relay:芙蕾|x]] 哈')
   assert.strictEqual(cleanedText.includes('[[relay:'), false)

@@ -12,25 +12,28 @@ const RELAY_RE = /\[\[relay:([^\]]*?)\]\]/g
 // placeholder words the model may copy from the preset example — never a real recipient
 const PLACEHOLDER_ALIAS = new Set(['别名', '收件人', 'target', 'alias', '某人'])
 
-// one marker body → { recipientAlias, text, photo: {desc,nsfw}|null } | null
-// body syntax: "别名|文字" | "别名|图=描述|nsfw" | "别名|文字|图=描述" (图=/nsfw tokens after first '|', any order)
+// one marker body → { recipientAlias, text, photo: {desc,nsfw}|null, again } | null
+// body syntax: "别名|文字" | "别名|图=描述|nsfw" | "别名|文字|图=描述" (图=/nsfw/again tokens after first '|', any order)
+// again (|再发) = explicit confirm to send to the SAME recipient again within the recent-send window
 function parseOneRelay(body) {
   const fields = String(body == null ? '' : body).split('|')
   const recipientAlias = (fields[0] || '').trim()
   if (!recipientAlias || PLACEHOLDER_ALIAS.has(recipientAlias)) return null
   let photoDesc = null
   let nsfw = false
+  let again = false
   const textParts = []
   for (const raw of fields.slice(1)) {
     const m = /^\s*(?:图|photo)\s*=\s*([\s\S]*)$/.exec(raw)
     if (m) { photoDesc = (m[1] || '').trim(); continue }
     if (raw.trim().toLowerCase() === 'nsfw') { nsfw = true; continue }
+    if (raw.trim().toLowerCase() === 'again' || raw.trim() === '再发') { again = true; continue }
     textParts.push(raw)
   }
   const text = textParts.join('|').trim()
   const photo = photoDesc !== null ? { desc: photoDesc, nsfw } : null
   if (!text && !photo) return null
-  return { recipientAlias, text, photo }
+  return { recipientAlias, text, photo, again }
 }
 
 // text → { cleanedText, relays:[...] }. Malformed/unclosed markers don't match → left as-is.

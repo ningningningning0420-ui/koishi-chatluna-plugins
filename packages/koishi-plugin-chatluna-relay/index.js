@@ -129,6 +129,12 @@ exports.apply = (ctx, config) => {
   // the same person. The window is short so the next-turn |nsfw-confirm resend still passes; the
   // gate only arms on an ACTUAL outbound send (guard-skips / held / dryRun don't arm it).
   const sendGate = guards.createSendGate(10000)
+  // Recent-send confirm gate (5 min): a NEW send to someone we ACTUALLY sent to minutes ago is
+  // HELD and the model gets a buffer note asking for an explicit |again. This mechanically kills
+  // the "asked 发了没 → re-narrates the send → really re-sends (live incident even escalated to
+  // an nsfw image)" loop — content-signature dedup can't catch it because the re-send's wording
+  // (or flags) differ. A deliberate rapid follow-up costs one confirm turn with |again.
+  const recentGate = guards.createSendGate(5 * 60 * 1000)
   function relayKeyOf(session) {
     return session.isDirect ? 'private:' + session.userId : 'group:' + (session.guildId != null ? session.guildId : session.channelId)
   }
@@ -175,6 +181,13 @@ exports.apply = (ctx, config) => {
 
     const imgTag = imgNsfw ? '[露骨]' : ''
     const hasSend = !!(r.text || imageUrl)
+    const tkey = relayKeyOf(session)
+    const gk = tkey + '||qq:' + recipient.qq // gate identity — matches the handler's cand.key
+    if (hasSend && !r.again && !recentGate.check(gk, now)) {
+      logger.info('relay hold: 几分钟内已发过 → ' + recipient.alias + '（要求 |again 确认）')
+      pushToBuffer(tkey, '（给' + recipient.alias + '的这条**没有发出去**——几分钟内我刚真的给ta发过了。若只是被问「发了没」：已经发过了，直接如实回答就好，别再发。确实要紧接着再发一条新的，下一轮重写标记并加 |again 确认。）', session.bot)
+      return 'held'
+    }
     // rate-limit only counts an actual outbound send (the nsfw-confirm note is internal, not a send)
     if (hasSend && config.rateLimitEnabled !== false) {
       const v = rateLimiter.check(now)
@@ -189,10 +202,8 @@ exports.apply = (ctx, config) => {
 
     try {
       const recipientKey = 'private:' + recipient.qq
-      const tkey = relayKeyOf(session)
-      const gk = tkey + '||qq:' + recipient.qq // send-gate identity — matches the handler's cand.key
-      if (r.text) { await bot.sendPrivateMessage(recipient.qq, r.text); sendGate.record(gk, Date.now()) }
-      if (imageUrl) { await bot.sendPrivateMessage(recipient.qq, h.image(imageUrl)); sendGate.record(gk, Date.now()) }
+      if (r.text) { await bot.sendPrivateMessage(recipient.qq, r.text); sendGate.record(gk, Date.now()); recentGate.record(gk, Date.now()) }
+      if (imageUrl) { await bot.sendPrivateMessage(recipient.qq, h.image(imageUrl)); sendGate.record(gk, Date.now()); recentGate.record(gk, Date.now()) }
       // record into BOTH buffers so the bot stays self-aware cross-conversation (incl. the photo's rating)
       if (r.text) pushToBuffer(recipientKey, r.text, bot)
       if (imageUrl) pushToBuffer(recipientKey, '（发了一张照片' + imgTag + '：' + imgDesc + '）', bot)
@@ -201,7 +212,7 @@ exports.apply = (ctx, config) => {
       }
       // nsfw held back: tell the model (in ITS OWN conversation) so it can re-send with |nsfw next turn
       if (nsfwHeldBack) {
-        pushToBuffer(tkey, '（我想发给' + recipient.alias + '的那张照片是露骨的——这次没发出去；要发的话，下一轮在 relay 标记里给那张图加 |nsfw 确认我要把露骨内容发给ta）', bot)
+        pushToBuffer(tkey, '（我想发给' + recipient.alias + '的那张照片是露骨的——这次没发出去；要发的话，下一轮在 relay 标记里给那张图加 |nsfw 确认我要把露骨内容发给ta；若几分钟内我还刚给ta发过别的，再一并加 |again）', bot)
       }
       if (hasSend) logger.info('relayed → ' + recipient.alias + ' (text=' + !!r.text + ' img=' + !!imageUrl + (imageUrl && imgNsfw ? '[nsfw]' : '') + ')')
       return hasSend ? 'sent' : 'held' // held = only the nsfw-confirm note went out (keep dedup slot so it isn't re-pushed per chunk)
