@@ -255,7 +255,7 @@ function createLongTermMemory(ctx) {
       })
       .map((r) => r.id)
     if (toRemove.length > 0) {
-      await ctx.database.remove(LTM_TABLE, { id: toRemove })
+      await ctx.database.remove(LTM_TABLE, { id: { $in: toRemove } })
     }
     return toRemove.length
   }

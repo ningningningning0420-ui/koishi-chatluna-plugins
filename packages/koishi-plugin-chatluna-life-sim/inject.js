@@ -230,7 +230,7 @@ function createInject(ctx, config, deps) {
     if (!renderer || typeof renderer.registerFunctionProvider !== 'function') {
       logger.warn
         ? logger.warn('[inject] ctx.chatluna.promptRenderer not available — skipping provider registration')
-        : logger.warn('[inject] ctx.chatluna.promptRenderer not available — skipping provider registration')
+        : console.warn('[inject] ctx.chatluna.promptRenderer not available — skipping provider registration')
       return
     }
 
