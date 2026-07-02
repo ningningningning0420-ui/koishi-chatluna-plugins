@@ -138,6 +138,44 @@ test('isTriggerAllowed: group when triggerGroups empty → false (private-only d
   assert.strictEqual(g.isTriggerAllowed({ userId: '10001', isDirect: false, groupId: '20001' }, { triggerWhitelist: WL, triggerGroups: [] }), false)
 })
 
+// ---- lastMarkerPerRecipient（同轮候选按"解析后身份"收敛：别名/QQ 双写合并，后者胜出）----
+const mk = (alias, text, photo) => ({ recipientAlias: alias, text: text || '', photo: photo || null })
+test('lastMarkerPerRecipient: 别名与 QQ 双写同一人 → 合并成一条，后者胜出', () => {
+  const out = g.lastMarkerPerRecipient([mk('膝丸', '草稿'), mk('1001', '定稿')], RECIPIENTS)
+  assert.strictEqual(out.length, 1)
+  assert.strictEqual(out[0].marker.text, '定稿')
+  assert.strictEqual(out[0].key, 'qq:1001')
+  assert.deepStrictEqual(out[0].recipient, { alias: '膝丸', qq: '1001' })
+})
+test('lastMarkerPerRecipient: 不同收件人各留一条（各自最后一个）', () => {
+  const out = g.lastMarkerPerRecipient([mk('膝丸', 'a'), mk('小明', 'b'), mk('膝丸', 'c')], RECIPIENTS)
+  assert.strictEqual(out.length, 2)
+  assert.strictEqual(out.find((o) => o.key === 'qq:1001').marker.text, 'c')
+})
+test('lastMarkerPerRecipient: 白名单外的别名保留自己的槽（recipient=null，键用别名）', () => {
+  const out = g.lastMarkerPerRecipient([mk('阿猫', 'x')], RECIPIENTS)
+  assert.strictEqual(out.length, 1)
+  assert.strictEqual(out[0].recipient, null)
+  assert.strictEqual(out[0].key, 'alias:阿猫')
+})
+test('lastMarkerPerRecipient: 空输入 → 空数组', () => {
+  assert.deepStrictEqual(g.lastMarkerPerRecipient([], RECIPIENTS), [])
+  assert.deepStrictEqual(g.lastMarkerPerRecipient(null, RECIPIENTS), [])
+})
+
+// ---- relaySignature（去重签名 = 身份 + 内容：同内容重复 chunk 去重，新内容/|nsfw 确认能过）----
+test('relaySignature: 同内容 → 签名稳定相同', () => {
+  const a = g.relaySignature('qq:1001', mk('膝丸', '', { desc: '哭泣特写', nsfw: false }))
+  assert.strictEqual(a, g.relaySignature('qq:1001', mk('膝丸', '', { desc: '哭泣特写', nsfw: false })))
+})
+test('relaySignature: |nsfw 确认重发 / 新文字 / 不同图描述 → 签名不同', () => {
+  const base = g.relaySignature('qq:1001', mk('膝丸', '', { desc: '哭泣特写', nsfw: false }))
+  assert.notStrictEqual(base, g.relaySignature('qq:1001', mk('膝丸', '', { desc: '哭泣特写', nsfw: true })))
+  assert.notStrictEqual(base, g.relaySignature('qq:1001', mk('膝丸', '补一句', { desc: '哭泣特写', nsfw: false })))
+  assert.notStrictEqual(base, g.relaySignature('qq:1001', mk('膝丸', '', { desc: '午后阳光', nsfw: false })))
+  assert.notStrictEqual(base, g.relaySignature('qq:1001', mk('膝丸', '', null)))
+})
+
 // ---- relay-tag ----
 const rt = require('./relay-tag')
 test('relay-tag: 纯文字', () => {

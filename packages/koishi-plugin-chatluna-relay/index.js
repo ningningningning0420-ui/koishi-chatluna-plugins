@@ -118,9 +118,13 @@ exports.apply = (ctx, config) => {
   }
 
   // ── per-turn dedup: raw-response fires per accumulating chunk → send each marker once. ──
+  // Key = session + resolved identity + CONTENT signature (guards.relaySignature): same-turn chunk
+  // re-emits collapse, but a NEW text / photo desc / |nsfw confirm gets a fresh signature and
+  // passes (the old alias-only key swallowed the NSFW-confirm resend for 60s). The slot is
+  // registered up-front so an in-flight send can't double-fire, and RELEASED again when the
+  // attempt didn't actually send (guard-skip / failure), so those don't burn it.
   const seenRelays = new Map()
-  function isDuplicateRelay(key, sig) {
-    const k = key + '||' + sig
+  function isDuplicateRelay(k) {
     const now = Date.now()
     for (const [mk, ts] of seenRelays) if (now - ts > 60000) seenRelays.delete(mk)
     if (seenRelays.has(k)) return true
@@ -131,16 +135,18 @@ exports.apply = (ctx, config) => {
     return session.isDirect ? 'private:' + session.userId : 'group:' + (session.guildId != null ? session.guildId : session.channelId)
   }
 
-  // execute one parsed relay marker. Guards → resolve image → rate-limit → send → record. Best-effort.
+  // execute one parsed relay marker. Guards → resolve image → rate-limit → send → record.
+  // Returns a status for the dedup caller: 'sent' | 'held' | 'dryrun' keep the dedup slot;
+  // 'skipped' | 'failed' release it (the attempt didn't send — a retry must not be blocked).
   async function doRelayOne(session, r) {
     const bot = session.bot
     const now = Date.now()
     const tctx = { userId: session.userId, isDirect: session.isDirect, groupId: session.guildId != null ? session.guildId : session.channelId }
-    if (!guards.isTriggerAllowed(tctx, { triggerWhitelist: config.triggerWhitelist, triggerGroups: config.triggerGroups })) return
+    if (!guards.isTriggerAllowed(tctx, { triggerWhitelist: config.triggerWhitelist, triggerGroups: config.triggerGroups })) return 'skipped'
     const recipient = guards.resolveRecipient(r.recipientAlias, config.recipients)
-    if (!recipient) { logger.info('relay: 收件人不在白名单: ' + r.recipientAlias); return }
+    if (!recipient) { logger.info('relay: 收件人不在白名单: ' + r.recipientAlias); return 'skipped' }
     const friendIds = await getFriendIds(bot)
-    if (friendIds && !guards.isFriend(recipient.qq, friendIds)) { logger.info('relay: 非好友: ' + recipient.qq); return }
+    if (friendIds && !guards.isFriend(recipient.qq, friendIds)) { logger.info('relay: 非好友: ' + recipient.qq); return 'skipped' }
 
     // resolve image first so a failed recall doesn't spend a rate slot
     let imageUrl = null
@@ -167,20 +173,20 @@ exports.apply = (ctx, config) => {
         logger.info('relay: 请求了图片但 photo 服务不可用，只发文字')
       }
     }
-    if (!r.text && !imageUrl && !nsfwHeldBack) return
+    if (!r.text && !imageUrl && !nsfwHeldBack) return 'skipped'
 
     const imgTag = imgNsfw ? '[露骨]' : ''
     const hasSend = !!(r.text || imageUrl)
     // rate-limit only counts an actual outbound send (the nsfw-confirm note is internal, not a send)
     if (hasSend && config.rateLimitEnabled !== false) {
       const v = rateLimiter.check(now)
-      if (!v.ok) { logger.info('relay skip: rate ' + v.reason); return }
+      if (!v.ok) { logger.info('relay skip: rate ' + v.reason); return 'skipped' }
       rateLimiter.record(now)
     }
 
     if (config.dryRun) {
       logger.info('[DRYRUN] relay → ' + recipient.alias + ' text=' + JSON.stringify(r.text) + ' img=' + (imageUrl ? imgDesc + (imgNsfw ? '[nsfw]' : '') : (nsfwHeldBack ? 'HELD(露骨未标nsfw)' : 'none')))
-      return
+      return 'dryrun'
     }
 
     try {
@@ -199,8 +205,10 @@ exports.apply = (ctx, config) => {
         pushToBuffer(tkey, '（我想发给' + recipient.alias + '的那张照片是露骨的——这次没发出去；要发的话，下一轮在 relay 标记里给那张图加 |nsfw 确认我要把露骨内容发给ta）', bot)
       }
       if (hasSend) logger.info('relayed → ' + recipient.alias + ' (text=' + !!r.text + ' img=' + !!imageUrl + (imageUrl && imgNsfw ? '[nsfw]' : '') + ')')
+      return hasSend ? 'sent' : 'held' // held = only the nsfw-confirm note went out (keep dedup slot so it isn't re-pushed per chunk)
     } catch (e) {
       logger.warn('relay send 失败 → ' + recipient.qq + ': ' + (e && e.message))
+      return 'failed'
     }
   }
 
@@ -214,14 +222,21 @@ exports.apply = (ctx, config) => {
       const { relays } = rtag.parseRelayTags(content)
       if (!relays.length) return
       const key = relayKeyOf(session)
-      // The model often writes SEVERAL candidate [[relay:别名|...]] markers in one turn while it
-      // deliberates wording — keep only the LAST marker per recipient (its final choice), then dedup
-      // per-recipient per turn (60s) so one recipient never gets multiple drafts of the same turn.
-      const lastPerRecipient = new Map()
-      for (const r of relays) lastPerRecipient.set(r.recipientAlias, r)
-      for (const r of lastPerRecipient.values()) {
-        if (isDuplicateRelay(key, r.recipientAlias)) continue
-        doRelayOne(session, r).catch((e) => logger.warn('doRelayOne failed: ' + (e && e.message))) // fire-and-forget per recipient
+      // The model often writes SEVERAL candidate [[relay:...]] markers in one turn while it
+      // deliberates wording — collapse to one per RESOLVED recipient (alias & bare-QQ writes of the
+      // same person merge; last wins = its final choice), then dedup by identity+content signature.
+      for (const cand of guards.lastMarkerPerRecipient(relays, config.recipients)) {
+        const dk = key + '||' + guards.relaySignature(cand.key, cand.marker)
+        if (isDuplicateRelay(dk)) {
+          if (config.debug) logger.info('relay dedup skip (' + cand.key + ')')
+          continue
+        }
+        doRelayOne(session, cand.marker)
+          .then((status) => {
+            // release the slot when nothing was sent, so a later legitimate retry isn't blocked
+            if (status !== 'sent' && status !== 'held' && status !== 'dryrun') seenRelays.delete(dk)
+          })
+          .catch((e) => { seenRelays.delete(dk); logger.warn('doRelayOne failed: ' + (e && e.message)) }) // fire-and-forget per recipient
       }
     } catch (e) {
       logger.warn('raw-response relay hook error: ' + (e && e.message))

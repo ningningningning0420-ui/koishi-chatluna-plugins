@@ -79,6 +79,29 @@ function isTriggerAllowed(ctx, cfg) {
   return (cfg.triggerGroups || []).some((id) => norm(id) === gid)
 }
 
+// Collapse a turn's candidate markers to one per RESOLVED identity. The model may write the same
+// person as an alias in one marker and the bare QQ in another — resolving first means both land in
+// the same slot (last wins = the model's final choice). Unresolved aliases keep their own
+// alias-keyed slot (they only ever produce a "not whitelisted" log, never a send).
+// → [{ key, recipient|null, marker }]
+function lastMarkerPerRecipient(relays, recipients) {
+  const map = new Map()
+  for (const r of relays || []) {
+    const rec = resolveRecipient(r.recipientAlias, recipients)
+    const key = rec ? 'qq:' + norm(rec.qq) : 'alias:' + norm(r.recipientAlias)
+    map.set(key, { key, recipient: rec, marker: r })
+  }
+  return [...map.values()]
+}
+
+// Dedup signature = identity + CONTENT. Re-emits of the same marker by later raw-response chunks
+// collapse; a new text / photo desc / |nsfw-confirm for the same recipient gets a fresh signature
+// (fixes the old alias-only dedup that swallowed the NSFW confirm resend for 60s).
+function relaySignature(identityKey, marker) {
+  const p = marker && marker.photo
+  return identityKey + '||' + ((marker && marker.text) || '') + '||' + (p ? p.desc || '' : '\x00nophoto') + '||' + (p ? !!p.nsfw : '')
+}
+
 module.exports = {
   isAuthorizedTrigger,
   isTriggerAllowed,
@@ -86,4 +109,6 @@ module.exports = {
   isFriend,
   isMyBot,
   createRateLimiter,
+  lastMarkerPerRecipient,
+  relaySignature,
 }
