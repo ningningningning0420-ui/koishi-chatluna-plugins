@@ -102,6 +102,24 @@ function relaySignature(identityKey, marker) {
   return identityKey + '||' + ((marker && marker.text) || '') + '||' + (p ? p.desc || '' : '\x00nophoto') + '||' + (p ? !!p.nsfw : '')
 }
 
+// Post-send identity gate: after an ACTUAL outbound send to an identity, suppress further sends to
+// the SAME identity for a short window. Content-signature dedup can't catch a same-turn draft the
+// model rewrote (new wording = new signature); this gate does, while the next-turn NSFW-confirm
+// resend (which arrives after the window) still passes. check is side-effect free.
+function createSendGate(windowMs) {
+  const last = new Map()
+  return {
+    check(idKey, now) {
+      const t = last.get(idKey)
+      return !(t != null && now - t < windowMs)
+    },
+    record(idKey, now) {
+      for (const [k, ts] of last) if (now - ts > windowMs * 10) last.delete(k)
+      last.set(idKey, now)
+    },
+  }
+}
+
 module.exports = {
   isAuthorizedTrigger,
   isTriggerAllowed,
@@ -111,4 +129,5 @@ module.exports = {
   createRateLimiter,
   lastMarkerPerRecipient,
   relaySignature,
+  createSendGate,
 }

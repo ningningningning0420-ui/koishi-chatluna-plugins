@@ -163,6 +163,20 @@ test('lastMarkerPerRecipient: 空输入 → 空数组', () => {
   assert.deepStrictEqual(g.lastMarkerPerRecipient(null, RECIPIENTS), [])
 })
 
+// ---- createSendGate（发送后短窗身份闸门：挡同轮"草稿已发→改词再发"的双发，不挡下一轮确认）----
+test('sendGate: 刚发过 → 窗口内同身份再发被拦', () => {
+  const gate = g.createSendGate(10000)
+  gate.record('private:1||qq:1001', 100000)
+  assert.strictEqual(gate.check('private:1||qq:1001', 105000), false)
+})
+test('sendGate: 窗口过了 / 没发过 / 不同身份 → 放行', () => {
+  const gate = g.createSendGate(10000)
+  gate.record('private:1||qq:1001', 100000)
+  assert.strictEqual(gate.check('private:1||qq:1001', 110000), true)
+  assert.strictEqual(gate.check('private:1||qq:2002', 105000), true)
+  assert.strictEqual(g.createSendGate(10000).check('private:1||qq:1001', 1), true)
+})
+
 // ---- relaySignature（去重签名 = 身份 + 内容：同内容重复 chunk 去重，新内容/|nsfw 确认能过）----
 test('relaySignature: 同内容 → 签名稳定相同', () => {
   const a = g.relaySignature('qq:1001', mk('膝丸', '', { desc: '哭泣特写', nsfw: false }))

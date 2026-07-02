@@ -124,13 +124,11 @@ exports.apply = (ctx, config) => {
   // registered up-front so an in-flight send can't double-fire, and RELEASED again when the
   // attempt didn't actually send (guard-skip / failure), so those don't burn it.
   const seenRelays = new Map()
-  function isDuplicateRelay(k) {
-    const now = Date.now()
-    for (const [mk, ts] of seenRelays) if (now - ts > 60000) seenRelays.delete(mk)
-    if (seenRelays.has(k)) return true
-    seenRelays.set(k, now)
-    return false
-  }
+  // Post-send identity gate (10s): content-signature dedup can't catch a same-turn draft the model
+  // REWORDED in a later chunk (new wording = new signature) — without this, that's a double-send to
+  // the same person. The window is short so the next-turn |nsfw-confirm resend still passes; the
+  // gate only arms on an ACTUAL outbound send (guard-skips / held / dryRun don't arm it).
+  const sendGate = guards.createSendGate(10000)
   function relayKeyOf(session) {
     return session.isDirect ? 'private:' + session.userId : 'group:' + (session.guildId != null ? session.guildId : session.channelId)
   }
@@ -192,8 +190,9 @@ exports.apply = (ctx, config) => {
     try {
       const recipientKey = 'private:' + recipient.qq
       const tkey = relayKeyOf(session)
-      if (r.text) await bot.sendPrivateMessage(recipient.qq, r.text)
-      if (imageUrl) await bot.sendPrivateMessage(recipient.qq, h.image(imageUrl))
+      const gk = tkey + '||qq:' + recipient.qq // send-gate identity — matches the handler's cand.key
+      if (r.text) { await bot.sendPrivateMessage(recipient.qq, r.text); sendGate.record(gk, Date.now()) }
+      if (imageUrl) { await bot.sendPrivateMessage(recipient.qq, h.image(imageUrl)); sendGate.record(gk, Date.now()) }
       // record into BOTH buffers so the bot stays self-aware cross-conversation (incl. the photo's rating)
       if (r.text) pushToBuffer(recipientKey, r.text, bot)
       if (imageUrl) pushToBuffer(recipientKey, '（发了一张照片' + imgTag + '：' + imgDesc + '）', bot)
@@ -225,12 +224,21 @@ exports.apply = (ctx, config) => {
       // The model often writes SEVERAL candidate [[relay:...]] markers in one turn while it
       // deliberates wording — collapse to one per RESOLVED recipient (alias & bare-QQ writes of the
       // same person merge; last wins = its final choice), then dedup by identity+content signature.
+      const now = Date.now()
+      for (const [mk, ts] of seenRelays) if (now - ts > 60000) seenRelays.delete(mk)
       for (const cand of guards.lastMarkerPerRecipient(relays, config.recipients)) {
         const dk = key + '||' + guards.relaySignature(cand.key, cand.marker)
-        if (isDuplicateRelay(dk)) {
+        if (seenRelays.has(dk)) {
           if (config.debug) logger.info('relay dedup skip (' + cand.key + ')')
           continue
         }
+        // reworded same-turn draft to someone we JUST sent to → suppress (visible in the log).
+        // Checked before registering the signature so a post-window retry isn't sig-blocked.
+        if (!sendGate.check(key + '||' + cand.key, now)) {
+          logger.info('relay: 同轮改稿抑制 — 刚给 ' + cand.key + ' 发过，这条改写版不再发（10s 窗）')
+          continue
+        }
+        seenRelays.set(dk, now)
         doRelayOne(session, cand.marker)
           .then((status) => {
             // release the slot when nothing was sent, so a later legitimate retry isn't blocked
